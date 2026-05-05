@@ -59,6 +59,9 @@ ehthumbs.db
 Thumbs.db
 Desktop.ini
 
+# ─── Project-local AI/Claude context docs ───────────────────────────────────
+PROJECT_CONTEXT.md
+
 # ─── Logs & Temp ─────────────────────────────────────────────────────────────
 *.log
 *.tmp
