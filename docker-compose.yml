@@ -1,0 +1,14 @@
+services:
+  brain:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - BRAIN_API_KEY=${BRAIN_API_KEY:-changeme_shared_secret}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
