@@ -59,6 +59,16 @@ ehthumbs.db
 Thumbs.db
 Desktop.ini
 
+# ─── Python cache ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
 # ─── Project-local AI/Claude context docs ───────────────────────────────────
 PROJECT_CONTEXT.md
 
