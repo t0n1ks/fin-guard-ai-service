@@ -69,8 +69,9 @@ __pycache__/
 dist/
 build/
 
-# ─── Project-local AI/Claude context docs ───────────────────────────────────
+# ─── Project-local docs (never publish — may contain integration details) ────
 PROJECT_CONTEXT.md
+INTEGRATION_GUIDE.md
 
 # ─── Logs & Temp ─────────────────────────────────────────────────────────────
 *.log
