@@ -73,6 +73,9 @@ build/
 PROJECT_CONTEXT.md
 INTEGRATION_GUIDE.md
 
+# ─── Brain service runtime state ────────────────────────────────────────────
+app/data/state/daily_state.json
+
 # ─── Logs & Temp ─────────────────────────────────────────────────────────────
 *.log
 *.tmp

@@ -5,11 +5,13 @@ from fastapi import FastAPI
 load_dotenv()
 
 from app.api.v1.endpoints.analyze import router as analyze_router
+from app.api.v1.endpoints.tamagotchi import router as tamagotchi_router
 from app.core.config import settings
 
 app = FastAPI(title="FinGuard AI Brain", version="1.0.0")
 
 app.include_router(analyze_router, prefix="/v1")
+app.include_router(tamagotchi_router, prefix="/v1")
 
 
 @app.get("/health")

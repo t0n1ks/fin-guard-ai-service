@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -9,3 +11,9 @@ class AnalyzeBehaviorResponse(BaseModel):
     smart_nudge: str
     spending_tier: str
     risk_flags: list[str]
+
+
+class NextActionResponse(BaseModel):
+    type: str
+    content: Optional[str] = None
+    animation_hint: str

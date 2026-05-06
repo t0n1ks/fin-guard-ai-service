@@ -11,6 +11,7 @@ from app.services import (
     sustainability_scorer,
     tier_calculator,
 )
+from app.services.content_tracker import store_pending_advice
 
 router = APIRouter()
 
@@ -42,6 +43,8 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
     nudge = nudge_generator.generate_nudge(
         tier, risk_flags, profile, transactions, today, predicted_balance
     )
+
+    store_pending_advice(user_id=profile.user_id, advice=nudge)
 
     return AnalyzeBehaviorResponse(
         financial_health_score=health_score,
