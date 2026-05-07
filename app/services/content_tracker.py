@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import tempfile
@@ -9,15 +10,46 @@ from datetime import date as date_type
 
 from app.data.content import FACTS, JOKES
 
+logger = logging.getLogger(__name__)
 
 def _cap(text: str) -> str:
     return text if len(text) <= 99 else text[:99] + "…"
+
+# ─── Storage backend ──────────────────────────────────────────────────────────
+
+_DB_URL = os.getenv("DATABASE_URL")
+_USE_DB = bool(_DB_URL)
 
 _STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "state", "daily_state.json")
 _lock = threading.Lock()
 
 
-def _load_state() -> dict:
+def _ensure_db_table() -> None:
+    import psycopg2
+    with psycopg2.connect(_DB_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tamagotchi_daily_state (
+                    user_id INTEGER PRIMARY KEY,
+                    date    TEXT    NOT NULL,
+                    data    JSONB   NOT NULL DEFAULT '{}'
+                )
+            """)
+        conn.commit()
+
+
+if _USE_DB:
+    try:
+        _ensure_db_table()
+        logger.info("content_tracker: using Neon PostgreSQL for state persistence")
+    except Exception as exc:
+        logger.warning("content_tracker: DB table setup failed (%s) — falling back to file", exc)
+        _USE_DB = False
+
+
+# ─── File backend ─────────────────────────────────────────────────────────────
+
+def _file_load_state() -> dict:
     try:
         with open(_STATE_FILE, encoding="utf-8") as f:
             return json.load(f)
@@ -25,7 +57,7 @@ def _load_state() -> dict:
         return {}
 
 
-def _save_state(state: dict) -> None:
+def _file_save_state(state: dict) -> None:
     dir_path = os.path.dirname(_STATE_FILE)
     os.makedirs(dir_path, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
@@ -40,6 +72,52 @@ def _save_state(state: dict) -> None:
             pass
         raise
 
+
+# ─── PostgreSQL backend ───────────────────────────────────────────────────────
+
+def _db_load_state() -> dict:
+    import psycopg2
+    import psycopg2.extras
+    with psycopg2.connect(_DB_URL) as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT user_id, data FROM tamagotchi_daily_state")
+            rows = cur.fetchall()
+    return {str(row["user_id"]): dict(row["data"]) for row in rows}
+
+
+def _db_save_state(state: dict) -> None:
+    import psycopg2
+    import psycopg2.extras
+    with psycopg2.connect(_DB_URL) as conn:
+        with conn.cursor() as cur:
+            for user_id_str, data in state.items():
+                cur.execute(
+                    """
+                    INSERT INTO tamagotchi_daily_state (user_id, date, data)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE
+                        SET date = EXCLUDED.date,
+                            data = EXCLUDED.data
+                    """,
+                    (int(user_id_str), data.get("date", ""), psycopg2.extras.Json(data)),
+                )
+        conn.commit()
+
+
+# ─── Unified load / save ──────────────────────────────────────────────────────
+
+def _load_state() -> dict:
+    return _db_load_state() if _USE_DB else _file_load_state()
+
+
+def _save_state(state: dict) -> None:
+    if _USE_DB:
+        _db_save_state(state)
+    else:
+        _file_save_state(state)
+
+
+# ─── State helpers ────────────────────────────────────────────────────────────
 
 def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> None:
     key = str(user_id)
@@ -69,6 +147,8 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         "greeting_served": existing.get("greeting_served", False) if same_day else False,
     }
 
+
+# ─── Public API ───────────────────────────────────────────────────────────────
 
 def get_next_joke(user_id: int, language: str) -> str | None:
     with _lock:
@@ -135,13 +215,11 @@ def store_pending_advice(user_id: int, advice: str) -> None:
         key = str(user_id)
         existing = state.get(key, {})
 
-        # preserve queue state for the day; only update advice fields
         if existing.get("date") == today:
             existing["pending_advice"] = advice
             existing["advice_consumed"] = False
             state[key] = existing
         else:
-            # new day — initialize minimal entry; queues will be built on first content call
             state[key] = {
                 "date": today,
                 "language": existing.get("language", "EN"),

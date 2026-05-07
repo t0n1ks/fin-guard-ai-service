@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.core.config import settings
@@ -17,7 +19,7 @@ router = APIRouter()
 
 
 def verify_api_key(x_brain_api_key: str = Header(...)) -> None:
-    if x_brain_api_key != settings.brain_api_key:
+    if not hmac.compare_digest(x_brain_api_key, settings.brain_api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 

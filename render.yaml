@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: fin-guard-ai-brain
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: BRAIN_API_KEY
+        sync: false   # set manually in Render dashboard — must match AI_SERVICE_KEY in Go backend
+      - key: DATABASE_URL
+        sync: false   # Neon PostgreSQL connection string; omit to use in-memory/file fallback
+      - key: LOG_LEVEL
+        value: info
