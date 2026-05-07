@@ -64,6 +64,7 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         # preserve same-day advice across language switches; wipe on new day
         "pending_advice": existing.get("pending_advice", "") if same_day else "",
         "advice_consumed": existing.get("advice_consumed", True) if same_day else True,
+        "rejections_today": existing.get("rejections_today", 0) if same_day else 0,
     }
 
 
@@ -148,6 +149,41 @@ def store_pending_advice(user_id: int, advice: str) -> None:
                 "facts_served": 0,
                 "pending_advice": advice,
                 "advice_consumed": False,
+                "rejections_today": 0,
             }
 
         _save_state(state)
+
+
+def record_rejection(user_id: int) -> None:
+    with _lock:
+        state = _load_state()
+        today = date_type.today().isoformat()
+        key = str(user_id)
+        existing = state.get(key, {})
+
+        if existing.get("date") == today:
+            existing["rejections_today"] = existing.get("rejections_today", 0) + 1
+            state[key] = existing
+        else:
+            state[key] = {
+                "date": today,
+                "language": existing.get("language", "EN"),
+                "joke_queue": [],
+                "fact_queue": [],
+                "jokes_served": 0,
+                "facts_served": 0,
+                "pending_advice": "",
+                "advice_consumed": True,
+                "rejections_today": 1,
+            }
+
+        _save_state(state)
+
+
+def is_apology_mode(user_id: int) -> bool:
+    with _lock:
+        state = _load_state()
+        today = date_type.today().isoformat()
+        u = state.get(str(user_id), {})
+        return u.get("date") == today and u.get("rejections_today", 0) >= 2

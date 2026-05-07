@@ -17,16 +17,16 @@ _TEMPLATES: dict[str, list[str]] = {
         "Heads up: {pct_used}% of week spent, {days_left} days to go.",
     ],
     "pacing_great": [
-        "Only {pct_used}% spent on {day_name}. Stellar! 🚀",
-        "Great pace — {pct_used}% used. Keep it up! ✨",
+        "Houston, only {pct_used}% used on {day_name}. 🚀",
+        "Stellar pace — {pct_used}% burned. All clear! ✨",
     ],
     "salary_just_in": [
         "💰 Payday! Keep goal: {goal} {currency}. Spend wisely.",
         "Fresh cash in! Stick to your {goal} {currency} plan.",
     ],
     "balanced": [
-        "Spending spread is healthy — no leaks! 🎯",
-        "All categories balanced. Solid week! 💪",
+        "Spending orbit stable — no leaks detected! 🛸",
+        "All systems balanced. Solid week! 💪",
     ],
     "pacing_good": [
         "On track! Trim {top_cat} 15% → ~{potential_saving} {currency} saved.",
@@ -41,8 +41,8 @@ _TEMPLATES: dict[str, list[str]] = {
         "Set expected salary in Settings to unlock insights.",
     ],
     "on_track": [
-        "Month-end forecast: {predicted_balance} {currency}. 👍",
-        "Projected {predicted_balance} {currency} at month's end. ✅",
+        "Trajectory: {predicted_balance} {currency} at month's end. 🌙",
+        "Orbit stable — {predicted_balance} {currency} projected. ✅",
     ],
 }
 
