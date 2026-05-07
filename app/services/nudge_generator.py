@@ -9,40 +9,40 @@ from app.models.request import TransactionItem, UserProfile
 
 _TEMPLATES: dict[str, list[str]] = {
     "pacing_over": [
-        "You're {pct_over}% over your weekly budget. Consider skipping {top_cat} this week.",
-        "Weekly overspend by {pct_over}%. Your {top_cat} spending is the main driver.",
+        "⚠️ {pct_over}% over budget! Cut {top_cat} now.",
+        "{top_cat} blew your week by {pct_over}%. 🕳️",
     ],
     "pacing_warn": [
-        "You've used {pct_used}% of your weekly allowance with {days_left} days to go.",
-        "Slow down — {pct_used}% of weekly budget spent, {days_left} days remain.",
+        "{pct_used}% used, {days_left}d left. Slow it down! 🐢",
+        "Heads up: {pct_used}% of week spent, {days_left} days to go.",
     ],
     "pacing_great": [
-        "Excellent pacing! Only {pct_used}% of weekly budget used on {day_name}.",
-        "Well under budget this week ({pct_used}% used). Keep it up!",
+        "Only {pct_used}% spent on {day_name}. Stellar! 🚀",
+        "Great pace — {pct_used}% used. Keep it up! ✨",
     ],
     "salary_just_in": [
-        "Salary received! You now have {effective_income} {currency}. Monthly goal: {goal} {currency}.",
-        "Fresh funds arrived. Remember your {goal} {currency} monthly spending goal.",
+        "💰 Payday! Keep goal: {goal} {currency}. Spend wisely.",
+        "Fresh cash in! Stick to your {goal} {currency} plan.",
     ],
     "balanced": [
-        "Great balance across categories this week! No single area dominates your spending.",
-        "Your spending is well-distributed. Keep the diversity going!",
+        "Spending spread is healthy — no leaks! 🎯",
+        "All categories balanced. Solid week! 💪",
     ],
     "pacing_good": [
-        "You're on track! Trimming {top_cat} by 15% could save ~{potential_saving} {currency} this month.",
-        "Good pacing. {days_left} days left with {budget_remaining} {currency} in weekly allowance.",
+        "On track! Trim {top_cat} 15% → ~{potential_saving} {currency} saved.",
+        "{days_left}d left, {budget_remaining} {currency} to spare. 👌",
     ],
     "predicted_shortfall": [
-        "Projected end-of-month balance: {predicted_balance} {currency}. A shortfall is likely — review expenses.",
-        "Your spending trend points to a {predicted_balance} {currency} finish. Consider cutting back now.",
+        "Shortfall ahead: {predicted_balance} {currency}. Cut now! 🔴",
+        "Trending to {predicted_balance} {currency} month-end. Danger! ⚠️",
     ],
     "no_income_logged": [
-        "No income logged this month. Add your salary to Settings to unlock budget tracking.",
-        "Set your expected salary in Settings so I can give you accurate budget advice.",
+        "No income logged. Add salary in Settings! 📊",
+        "Set expected salary in Settings to unlock insights.",
     ],
     "on_track": [
-        "You're on track for a {predicted_balance} {currency} balance at month end.",
-        "Looking good — projected month-end balance is {predicted_balance} {currency}.",
+        "Month-end forecast: {predicted_balance} {currency}. 👍",
+        "Projected {predicted_balance} {currency} at month's end. ✅",
     ],
 }
 
@@ -71,7 +71,8 @@ def _build_context(
     cat_map: dict[str, float] = defaultdict(float)
     for tx in week_expenses:
         cat_map[tx.category.name] += tx.amount
-    top_cat = max(cat_map, key=lambda k: cat_map[k]) if cat_map else "miscellaneous"
+    raw_top = max(cat_map, key=lambda k: cat_map[k]) if cat_map else "misc"
+    top_cat = raw_top[:16] if len(raw_top) > 16 else raw_top
 
     days_left = 7 - analysis_date.isoweekday()
     pct_used = int(round(pace * 100))
@@ -120,6 +121,7 @@ def generate_nudge(
 
     template = random.choice(_TEMPLATES[key])
     try:
-        return template.format(**ctx)
+        result = template.format(**ctx)
     except KeyError:
-        return random.choice(_TEMPLATES["on_track"]).format(**ctx)
+        result = random.choice(_TEMPLATES["on_track"]).format(**ctx)
+    return result if len(result) <= 99 else result[:99] + "…"

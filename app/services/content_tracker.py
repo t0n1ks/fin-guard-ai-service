@@ -9,6 +9,10 @@ from datetime import date as date_type
 
 from app.data.content import FACTS, JOKES
 
+
+def _cap(text: str) -> str:
+    return text if len(text) <= 99 else text[:99] + "…"
+
 _STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "state", "daily_state.json")
 _lock = threading.Lock()
 
@@ -81,7 +85,7 @@ def get_next_joke(user_id: int, language: str) -> str | None:
         joke = u["joke_queue"].pop(0)
         u["jokes_served"] += 1
         _save_state(state)
-        return joke
+        return _cap(joke)
 
 
 def get_next_fact(user_id: int, language: str) -> str | None:
@@ -102,7 +106,7 @@ def get_next_fact(user_id: int, language: str) -> str | None:
         fact = u["fact_queue"].pop(0)
         u["facts_served"] += 1
         _save_state(state)
-        return fact
+        return _cap(fact)
 
 
 def get_pending_advice(user_id: int) -> str | None:
