@@ -14,6 +14,7 @@ from app.services import (
     tier_calculator,
 )
 from app.services.content_tracker import store_pending_advice
+from app.services.visit_tracker import record_visit
 
 router = APIRouter()
 
@@ -47,6 +48,7 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
     )
 
     store_pending_advice(user_id=profile.user_id, advice=nudge)
+    record_visit(user_id=profile.user_id)
 
     return AnalyzeBehaviorResponse(
         financial_health_score=health_score,

@@ -143,7 +143,6 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         # Clear stale advice when language changes mid-day — was generated in wrong language
         "pending_advice": existing.get("pending_advice", "") if (same_day and same_lang) else "",
         "advice_consumed": existing.get("advice_consumed", True) if (same_day and same_lang) else True,
-        "rejections_today": existing.get("rejections_today", 0) if same_day else 0,
         "greeting_served": existing.get("greeting_served", False) if same_day else False,
     }
 
@@ -229,46 +228,10 @@ def store_pending_advice(user_id: int, advice: str) -> None:
                 "facts_served": 0,
                 "pending_advice": advice,
                 "advice_consumed": False,
-                "rejections_today": 0,
                 "greeting_served": False,
             }
 
         _save_state(state)
-
-
-def record_rejection(user_id: int) -> None:
-    with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        key = str(user_id)
-        existing = state.get(key, {})
-
-        if existing.get("date") == today:
-            existing["rejections_today"] = existing.get("rejections_today", 0) + 1
-            state[key] = existing
-        else:
-            state[key] = {
-                "date": today,
-                "language": existing.get("language", "EN"),
-                "joke_queue": [],
-                "fact_queue": [],
-                "jokes_served": 0,
-                "facts_served": 0,
-                "pending_advice": "",
-                "advice_consumed": True,
-                "rejections_today": 1,
-                "greeting_served": False,
-            }
-
-        _save_state(state)
-
-
-def is_apology_mode(user_id: int) -> bool:
-    with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        u = state.get(str(user_id), {})
-        return u.get("date") == today and u.get("rejections_today", 0) >= 2
 
 
 def get_greeting_served(user_id: int) -> bool:
