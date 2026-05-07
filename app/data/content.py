@@ -99,3 +99,125 @@ FACTS: dict[str, list[str]] = {
         "Hochverzinste Schulden (über 7%) sollten generell vor dem Investieren abbezahlt werden.",
     ],
 }
+
+GREETINGS: dict[str, dict[str, list[str]]] = {
+    "EN": {
+        "morning": [
+            "Good morning! ☀️ Fresh day, fresh budget. Let's make it count.",
+            "Morning! Best time to check your finances before the day gets busy.",
+            "Rise and track! 🌅 Ready to see where the money flows today?",
+        ],
+        "afternoon": [
+            "Afternoon check-in! 🛸 Budget holding steady so far?",
+            "Mid-day orbit stable. How's the spending looking? 📊",
+            "Hey! Don't forget to log that lunch. Small entries, big picture.",
+        ],
+        "evening": [
+            "Good evening! 🌙 A good moment to review today's spending.",
+            "Day's almost done — any surprise expenses to log? 🌆",
+            "Evening. If you tracked today, you're already ahead of most people.",
+        ],
+        "night": [
+            "Still up? 🌠 Late-night purchases hit different in the morning.",
+            "Night mode. Quick thought: tomorrow's budget starts with tonight's choices.",
+            "Burning the midnight oil? 🦉 Log anything before you forget.",
+        ],
+    },
+    "RU": {
+        "morning": [
+            "Доброе утро! ☀️ Новый день — новый бюджет. Сделаем его продуктивным.",
+            "Утро! Лучшее время проверить финансы, пока день не закрутил.",
+            "Подъём и учёт! 🌅 Посмотрим, куда пойдут деньги сегодня.",
+        ],
+        "afternoon": [
+            "Дневная проверка! 🛸 Бюджет держится в норме?",
+            "Середина дня — орбита стабильна. Как расходы? 📊",
+            "Эй! Не забудь занести обед. Мелкие записи — большая картина.",
+        ],
+        "evening": [
+            "Добрый вечер! 🌙 Самое время подвести итоги дня.",
+            "День почти позади — есть неожиданные траты? 🌆",
+            "Вечер. Раз ты трекал сегодня — ты уже впереди большинства.",
+        ],
+        "night": [
+            "Ещё не спишь? 🌠 Ночные покупки иначе смотрятся утром.",
+            "Ночной режим. Мысль: завтрашний бюджет начинается с сегодняшних решений.",
+            "Полночный марафон? 🦉 Занеси всё, пока не забыл.",
+        ],
+    },
+    "UA": {
+        "morning": [
+            "Доброго ранку! ☀️ Новий день — новий бюджет. Зробимо його продуктивним.",
+            "Ранок! Найкращий час перевірити фінанси, поки день не розкрутився.",
+            "Підйом і облік! 🌅 Подивимось, куди підуть гроші сьогодні.",
+        ],
+        "afternoon": [
+            "Денна перевірка! 🛸 Бюджет тримається в нормі?",
+            "Середина дня — орбіта стабільна. Як витрати? 📊",
+            "Гей! Не забудь внести обід. Малі записи — велика картина.",
+        ],
+        "evening": [
+            "Добрий вечір! 🌙 Найкращий момент підбити підсумок дня.",
+            "День майже позаду — є несподівані витрати? 🌆",
+            "Вечір. Якщо ти відстежував сьогодні — ти вже попереду більшості.",
+        ],
+        "night": [
+            "Ще не спиш? 🌠 Нічні покупки інакше виглядають вранці.",
+            "Нічний режим. Думка: завтрашній бюджет починається з рішень сьогодні.",
+            "Нічний марафон? 🦉 Внеси все, поки не забув.",
+        ],
+    },
+    "DE": {
+        "morning": [
+            "Guten Morgen! ☀️ Neuer Tag, neues Budget. Lass es zählen.",
+            "Morgen! Die beste Zeit, Finanzen zu prüfen, bevor der Tag losgeht.",
+            "Aufstehen und tracken! 🌅 Wohin fließt das Geld heute?",
+        ],
+        "afternoon": [
+            "Mittags-Check! 🛸 Budget noch im grünen Bereich?",
+            "Mittagsorbit stabil. Wie sehen die Ausgaben aus? 📊",
+            "Hey! Mittagessen nicht vergessen einzutragen. Klein, aber wichtig.",
+        ],
+        "evening": [
+            "Guten Abend! 🌙 Zeit, den heutigen Tag auszuwerten.",
+            "Tag fast vorbei — gab es Überraschungsausgaben? 🌆",
+            "Abend. Wer heute tracked, ist schon weiter als die meisten.",
+        ],
+        "night": [
+            "Noch wach? 🌠 Nächtliche Käufe sehen morgens anders aus.",
+            "Nachtmodus. Gedanke: Das Budget von morgen beginnt mit heutigen Entscheidungen.",
+            "Mitternachts-Session? 🦉 Alles eintragen, solange es noch frisch ist.",
+        ],
+    },
+}
+
+ENCOURAGEMENTS: dict[str, list[str]] = {
+    "EN": [
+        "You're doing great just by tracking. Most people don't even start. 🌟",
+        "Awareness is the first step to financial freedom. Keep going!",
+        "Every entry logged is a small win. They add up. 💪",
+        "Small habits, big results. You've got this.",
+        "Consistency beats perfection. Show up, log, repeat. ✨",
+    ],
+    "RU": [
+        "Уже то, что ты отслеживаешь — отлично. Большинство даже не начинает. 🌟",
+        "Осознанность — первый шаг к финансовой свободе. Продолжай!",
+        "Каждая запись — маленькая победа. Они суммируются. 💪",
+        "Маленькие привычки, большие результаты. Ты справляешься!",
+        "Постоянство важнее совершенства. Приходи, веди учёт, повторяй. ✨",
+    ],
+    "UA": [
+        "Вже те, що ти відстежуєш — відмінно. Більшість навіть не починає. 🌟",
+        "Усвідомленість — перший крок до фінансової свободи. Продовжуй!",
+        "Кожен запис — маленька перемога. Вони накопичуються. 💪",
+        "Маленькі звички, великі результати. Ти справляєшся!",
+        "Постійність важливіша за досконалість. Приходь, веди облік, повторяй. ✨",
+    ],
+    "DE": [
+        "Allein das Tracken ist schon toll. Die meisten fangen gar nicht erst an. 🌟",
+        "Bewusstsein ist der erste Schritt zur finanziellen Freiheit. Weiter so!",
+        "Jeder Eintrag ist ein kleiner Sieg. Sie summieren sich. 💪",
+        "Kleine Gewohnheiten, große Ergebnisse. Du schaffst das!",
+        "Konsequenz schlägt Perfektion. Kommen, tracken, wiederholen. ✨",
+    ],
+}

@@ -54,6 +54,7 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
     random.shuffle(jokes)
     random.shuffle(facts)
 
+    same_lang = existing.get("language") == language
     state[key] = {
         "date": today,
         "language": language,
@@ -61,10 +62,11 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         "fact_queue": facts,
         "jokes_served": 0,
         "facts_served": 0,
-        # preserve same-day advice across language switches; wipe on new day
-        "pending_advice": existing.get("pending_advice", "") if same_day else "",
-        "advice_consumed": existing.get("advice_consumed", True) if same_day else True,
+        # Clear stale advice when language changes mid-day — was generated in wrong language
+        "pending_advice": existing.get("pending_advice", "") if (same_day and same_lang) else "",
+        "advice_consumed": existing.get("advice_consumed", True) if (same_day and same_lang) else True,
         "rejections_today": existing.get("rejections_today", 0) if same_day else 0,
+        "greeting_served": existing.get("greeting_served", False) if same_day else False,
     }
 
 
@@ -150,6 +152,7 @@ def store_pending_advice(user_id: int, advice: str) -> None:
                 "pending_advice": advice,
                 "advice_consumed": False,
                 "rejections_today": 0,
+                "greeting_served": False,
             }
 
         _save_state(state)
@@ -176,6 +179,7 @@ def record_rejection(user_id: int) -> None:
                 "pending_advice": "",
                 "advice_consumed": True,
                 "rejections_today": 1,
+                "greeting_served": False,
             }
 
         _save_state(state)
@@ -187,3 +191,21 @@ def is_apology_mode(user_id: int) -> bool:
         today = date_type.today().isoformat()
         u = state.get(str(user_id), {})
         return u.get("date") == today and u.get("rejections_today", 0) >= 2
+
+
+def get_greeting_served(user_id: int) -> bool:
+    with _lock:
+        state = _load_state()
+        today = date_type.today().isoformat()
+        u = state.get(str(user_id), {})
+        return u.get("date") == today and u.get("greeting_served", False)
+
+
+def mark_greeting_served(user_id: int) -> None:
+    with _lock:
+        state = _load_state()
+        key = str(user_id)
+        u = state.get(key, {})
+        u["greeting_served"] = True
+        state[key] = u
+        _save_state(state)
