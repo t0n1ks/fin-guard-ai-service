@@ -1,3 +1,5 @@
+import logging
+
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Query
 
@@ -7,6 +9,7 @@ from app.services.content_tracker import record_rejection
 from app.services.tamagotchi_action import get_next_action
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _VALID_LANGUAGES = {"EN", "RU", "UA", "DE"}
 
@@ -30,6 +33,7 @@ def next_tamagotchi_action(
         lang = "UA"
     if lang not in _VALID_LANGUAGES:
         lang = "EN"
+    logger.info("[tamagotchi] next-action uid=%d raw_lang=%r resolved_lang=%s", user_id, language, lang)
     return get_next_action(user_id=user_id, language=lang)
 
 
