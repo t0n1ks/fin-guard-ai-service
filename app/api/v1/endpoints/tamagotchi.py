@@ -26,6 +26,8 @@ def next_tamagotchi_action(
     language: str = Query(default="EN", description="Language code: EN, RU, UA, DE"),
 ) -> NextActionResponse:
     lang = language.upper().strip()
+    if lang == "UK":  # ISO 639-1 for Ukrainian → internal code
+        lang = "UA"
     if lang not in _VALID_LANGUAGES:
         lang = "EN"
     return get_next_action(user_id=user_id, language=lang)

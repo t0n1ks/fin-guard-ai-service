@@ -36,6 +36,8 @@ class UserProfile(BaseModel):
     @classmethod
     def normalize_language(cls, v: object) -> str:
         s = str(v).upper().strip() if v else "EN"
+        if s == "UK":  # ISO 639-1 for Ukrainian → internal code
+            s = "UA"
         return s if s in {"EN", "RU", "UA", "DE"} else "EN"
 
     @field_validator("manual_next_payday", mode="before")
