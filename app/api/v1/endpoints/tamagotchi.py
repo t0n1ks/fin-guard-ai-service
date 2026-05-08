@@ -1,9 +1,11 @@
 import logging
+import random
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Query
 
 from app.api.v1.endpoints.analyze import verify_api_key
+from app.data.content import ENCOURAGEMENTS
 from app.models.response import NextActionResponse
 from app.services.tamagotchi_action import get_next_action
 
@@ -28,12 +30,17 @@ def next_tamagotchi_action(
     language: str = Query(default="EN", description="Language code: EN, RU, UA, DE"),
 ) -> NextActionResponse:
     lang = language.upper().strip()
-    if lang == "UK":  # ISO 639-1 for Ukrainian → internal code
+    if lang == "UK":
         lang = "UA"
     if lang not in _VALID_LANGUAGES:
         lang = "EN"
     logger.info("[tamagotchi] next-action uid=%d raw_lang=%r resolved_lang=%s", user_id, language, lang)
-    return get_next_action(user_id=user_id, language=lang)
+    try:
+        return get_next_action(user_id=user_id, language=lang)
+    except Exception:
+        logger.exception("[tamagotchi] get_next_action failed — serving local fallback")
+        enc = ENCOURAGEMENTS.get(lang, ENCOURAGEMENTS["EN"])
+        return NextActionResponse(type="ENCOURAGEMENT", content=random.choice(enc), animation_hint="COIN_COLLECT")
 
 
 @router.post(

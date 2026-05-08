@@ -33,10 +33,22 @@ def _get_time_segment() -> str:
     return "night"
 
 
+def _enforce_length(text: str, limit: int = 140) -> str:
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _build_response(type_: str, content: str | None, hint: str, language: str) -> NextActionResponse:
+    text = (content or "").strip()
+    if len(text) < 5:
+        enc = ENCOURAGEMENTS.get(language.upper(), ENCOURAGEMENTS["EN"])
+        text = random.choice(enc)
+    return NextActionResponse(type=type_, content=_enforce_length(text), animation_hint=hint)
+
+
 def get_next_action(user_id: int, language: str) -> NextActionResponse:
     advice = get_pending_advice(user_id)
     if advice is not None:
-        return NextActionResponse(type="ADVICE", content=advice, animation_hint="COIN_COLLECT")
+        return _build_response("ADVICE", advice, "COIN_COLLECT", language)
 
     # Time-aware / mood-aware greeting — shown once per day on first interaction
     if not get_greeting_served(user_id):
@@ -53,24 +65,28 @@ def get_next_action(user_id: int, language: str) -> NextActionResponse:
 
         greeting = random.choice(pool)
         mark_greeting_served(user_id)
-        return NextActionResponse(type="GREETING", content=greeting, animation_hint="FLY_BY_MOON")
+        return _build_response("GREETING", greeting, "FLY_BY_MOON", language)
 
-    joke = get_next_joke(user_id, language)
-    if joke is not None:
-        return NextActionResponse(type="JOKE", content=joke, animation_hint="COW_ABDUCTION")
+    # 30% jokes / 70% facts — probabilistic ordering, fall through if one pool exhausted
+    if random.random() < 0.3:
+        first_fn, first_type, first_hint = get_next_joke, "JOKE", "COW_ABDUCTION"
+        second_fn, second_type, second_hint = get_next_fact, "FACT", "COIN_COLLECT"
+    else:
+        first_fn, first_type, first_hint = get_next_fact, "FACT", "COIN_COLLECT"
+        second_fn, second_type, second_hint = get_next_joke, "JOKE", "COW_ABDUCTION"
 
-    fact = get_next_fact(user_id, language)
-    if fact is not None:
-        return NextActionResponse(type="FACT", content=fact, animation_hint="COIN_COLLECT")
+    content = first_fn(user_id, language)
+    if content is not None:
+        return _build_response(first_type, content, first_hint, language)
 
-    # Encouragement when daily jokes/facts are exhausted — 60% chance, else animation
+    content = second_fn(user_id, language)
+    if content is not None:
+        return _build_response(second_type, content, second_hint, language)
+
+    # Encouragement when daily limits are exhausted — 60% chance, else animation
     if random.random() < 0.6:
         lang_encouragements = ENCOURAGEMENTS.get(language.upper(), ENCOURAGEMENTS["EN"])
-        return NextActionResponse(
-            type="ENCOURAGEMENT",
-            content=random.choice(lang_encouragements),
-            animation_hint="COIN_COLLECT",
-        )
+        return _build_response("ENCOURAGEMENT", random.choice(lang_encouragements), "COIN_COLLECT", language)
 
     return NextActionResponse(
         type="RANDOM_ANIMATION",

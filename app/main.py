@@ -28,7 +28,12 @@ app.include_router(tamagotchi_router, prefix="/v1")
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    from app.services.content_tracker import _USE_DB
+    return {
+        "status": "ok",
+        "maintenance_mode": settings.maintenance_mode,
+        "storage": "postgresql" if _USE_DB else "file",
+    }
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from app.data.content import FACTS, JOKES
 logger = logging.getLogger(__name__)
 
 def _cap(text: str) -> str:
-    return text if len(text) <= 99 else text[:99] + "…"
+    return text if len(text) <= 140 else text[:139] + "…"
 
 # ─── Storage backend ──────────────────────────────────────────────────────────
 
@@ -123,24 +123,54 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
     key = str(user_id)
     existing = state.get(key, {})
     same_day = existing.get("date") == today
+    same_lang = existing.get("language") == language
 
-    if same_day and existing.get("language") == language:
+    if same_day and same_lang:
+        # Backfill seen lists for state created before this feature
+        if "seen_jokes" not in existing:
+            existing["seen_jokes"] = []
+        if "seen_facts" not in existing:
+            existing["seen_facts"] = []
+        state[key] = existing
         return
 
-    jokes = list(JOKES.get(language, JOKES["EN"]))
-    facts = list(FACTS.get(language, FACTS["EN"]))
-    random.shuffle(jokes)
-    random.shuffle(facts)
+    all_jokes = list(JOKES.get(language, JOKES["EN"]))
+    all_facts = list(FACTS.get(language, FACTS["EN"]))
 
-    same_lang = existing.get("language") == language
+    if same_lang:
+        # Carry cross-day seen lists forward
+        seen_jokes: list = existing.get("seen_jokes", [])
+        seen_facts: list = existing.get("seen_facts", [])
+    else:
+        # Language changed — start fresh
+        seen_jokes = []
+        seen_facts = []
+
+    # Build today's queue from unseen items only
+    unseen_jokes = [j for j in all_jokes if j not in seen_jokes]
+    if not unseen_jokes:
+        # Full cycle complete — reset and serve every joke again
+        seen_jokes = []
+        unseen_jokes = list(all_jokes)
+
+    unseen_facts = [f for f in all_facts if f not in seen_facts]
+    if not unseen_facts:
+        seen_facts = []
+        unseen_facts = list(all_facts)
+
+    random.shuffle(unseen_jokes)
+    random.shuffle(unseen_facts)
+
     state[key] = {
         "date": today,
         "language": language,
-        "joke_queue": jokes,
-        "fact_queue": facts,
+        "joke_queue": unseen_jokes,
+        "fact_queue": unseen_facts,
         "jokes_served": 0,
         "facts_served": 0,
-        # Clear stale advice when language changes mid-day — was generated in wrong language
+        "seen_jokes": seen_jokes,
+        "seen_facts": seen_facts,
+        # Preserve pending advice only when it was generated in the same language today
         "pending_advice": existing.get("pending_advice", "") if (same_day and same_lang) else "",
         "advice_consumed": existing.get("advice_consumed", True) if (same_day and same_lang) else True,
         "greeting_served": existing.get("greeting_served", False) if same_day else False,
@@ -160,12 +190,13 @@ def get_next_joke(user_id: int, language: str) -> str | None:
             return None
 
         if not u["joke_queue"]:
-            pool = list(JOKES.get(language, JOKES["EN"]))
-            random.shuffle(pool)
-            u["joke_queue"] = pool
+            return None
 
         joke = u["joke_queue"].pop(0)
         u["jokes_served"] += 1
+        seen: list = u.setdefault("seen_jokes", [])
+        if joke not in seen:
+            seen.append(joke)
         _save_state(state)
         return _cap(joke)
 
@@ -181,12 +212,13 @@ def get_next_fact(user_id: int, language: str) -> str | None:
             return None
 
         if not u["fact_queue"]:
-            pool = list(FACTS.get(language, FACTS["EN"]))
-            random.shuffle(pool)
-            u["fact_queue"] = pool
+            return None
 
         fact = u["fact_queue"].pop(0)
         u["facts_served"] += 1
+        seen: list = u.setdefault("seen_facts", [])
+        if fact not in seen:
+            seen.append(fact)
         _save_state(state)
         return _cap(fact)
 
@@ -226,6 +258,8 @@ def store_pending_advice(user_id: int, advice: str) -> None:
                 "fact_queue": [],
                 "jokes_served": 0,
                 "facts_served": 0,
+                "seen_jokes": existing.get("seen_jokes", []),
+                "seen_facts": existing.get("seen_facts", []),
                 "pending_advice": advice,
                 "advice_consumed": False,
                 "greeting_served": False,
