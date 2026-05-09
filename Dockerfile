@@ -21,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
+# Disable Python's stdout/stderr buffering so every log line reaches Render immediately.
+ENV PYTHONUNBUFFERED=1
 
 COPY app/ ./app/
 
@@ -28,4 +30,4 @@ RUN mkdir -p app/data/state
 
 EXPOSE 8001
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001} --log-level info"]
