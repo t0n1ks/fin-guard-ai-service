@@ -162,6 +162,13 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
     },
 }
 
+_TOP_CAT_FALLBACK: dict[str, str] = {
+    "EN": "expenses",
+    "RU": "расходы",
+    "UA": "витрати",
+    "DE": "Ausgaben",
+}
+
 _DAY_NAMES: dict[str, list[str]] = {
     "EN": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
     "RU": ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"],
@@ -175,6 +182,7 @@ def _build_context(
     profile: UserProfile,
     analysis_date: date,
     predicted_balance: float,
+    user_categories: list[str] | None = None,
 ) -> dict[str, Any]:
     monday = analysis_date - timedelta(days=analysis_date.isoweekday() - 1)
     week_expenses = [tx for tx in transactions if tx.type == "expense" and tx.date >= monday]
@@ -193,8 +201,14 @@ def _build_context(
 
     cat_map: dict[str, float] = defaultdict(float)
     for tx in week_expenses:
-        cat_map[tx.category.name] += tx.amount
-    raw_top = max(cat_map, key=lambda k: cat_map[k]) if cat_map else "misc"
+        cat_name = tx.category.name
+        # Strict category isolation: only count categories that belong to this user.
+        if user_categories and cat_name not in user_categories:
+            continue
+        cat_map[cat_name] += tx.amount
+    _lang_key = profile.language.upper()
+    _fallback = _TOP_CAT_FALLBACK.get(_lang_key, _TOP_CAT_FALLBACK["EN"])
+    raw_top = max(cat_map, key=lambda k: cat_map[k]) if cat_map else _fallback
     top_cat = raw_top[:16] if len(raw_top) > 16 else raw_top
 
     days_left = 7 - analysis_date.isoweekday()
@@ -231,8 +245,9 @@ def generate_nudge(
     transactions: list[TransactionItem],
     analysis_date: date,
     predicted_balance: float,
+    user_categories: list[str] | None = None,
 ) -> str:
-    ctx = _build_context(transactions, profile, analysis_date, predicted_balance)
+    ctx = _build_context(transactions, profile, analysis_date, predicted_balance, user_categories=user_categories)
     lang = profile.language.upper()
     lang_templates = _TEMPLATES.get(lang, _TEMPLATES["EN"])
 

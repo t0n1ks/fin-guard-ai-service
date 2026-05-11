@@ -51,11 +51,22 @@ app.include_router(tamagotchi_router, prefix="/v1")
 
 @app.get("/health")
 def health():
-    from app.services.content_tracker import _USE_DB
+    from app.services.content_tracker import _USE_DB, _DB_URL
+    db_connected = True
+    if _USE_DB:
+        try:
+            import psycopg2
+            with psycopg2.connect(_DB_URL, connect_timeout=5) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+        except Exception as exc:
+            logger.warning("health: DB connectivity check failed: %s", exc)
+            db_connected = False
     return {
         "status": "ok",
         "maintenance_mode": settings.maintenance_mode,
         "storage": "postgresql" if _USE_DB else "file",
+        "db_connected": db_connected,
     }
 
 

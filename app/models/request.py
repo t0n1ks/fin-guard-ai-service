@@ -52,3 +52,4 @@ class AnalyzeBehaviorRequest(BaseModel):
     user_profile: UserProfile
     transactions: list[TransactionItem]
     analysis_date: date
+    user_categories: list[str] = Field(default_factory=list)
