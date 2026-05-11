@@ -6,6 +6,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
@@ -62,12 +63,15 @@ def health():
         except Exception as exc:
             logger.warning("health: DB connectivity check failed: %s", exc)
             db_connected = False
-    return {
-        "status": "ok",
+    payload = {
+        "status": "ok" if (not _USE_DB or db_connected) else "unavailable",
         "maintenance_mode": settings.maintenance_mode,
         "storage": "postgresql" if _USE_DB else "file",
         "db_connected": db_connected,
     }
+    if _USE_DB and not db_connected:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 if __name__ == "__main__":
