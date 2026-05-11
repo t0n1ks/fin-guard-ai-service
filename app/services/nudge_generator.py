@@ -7,8 +7,14 @@ from typing import Any
 
 from app.models.request import TransactionItem, UserProfile
 
+_SAVINGS_THRESHOLD = 5.0  # EUR — minimum category spend before suggesting a savings tip
+
 _TEMPLATES: dict[str, dict[str, list[str]]] = {
     "EN": {
+        "pacing_good_start": [
+            "Great start! No significant expenses yet. 🌱",
+            "Clean week so far — keep it up! ✨",
+        ],
         "pacing_over": [
             "⚠️ {pct_over}% over budget! Cut {top_cat} now.",
             "{top_cat} blew your week by {pct_over}%. 🕳️",
@@ -47,6 +53,10 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         ],
     },
     "RU": {
+        "pacing_good_start": [
+            "Отличное начало! Расходов почти нет. 🌱",
+            "Чистая неделя! Продолжай в том же духе! ✨",
+        ],
         "pacing_over": [
             "⚠️ Перерасход {pct_over}%! Урежьте {top_cat}.",
             "{top_cat} сжёг бюджет на {pct_over}% сверх нормы. 🕳️",
@@ -85,6 +95,10 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         ],
     },
     "UA": {
+        "pacing_good_start": [
+            "Чудовий старт! Витрат майже немає. 🌱",
+            "Чистий тиждень — так тримати! ✨",
+        ],
         "pacing_over": [
             "⚠️ Перевитрат {pct_over}%! Скоротіть {top_cat}.",
             "{top_cat} спалив бюджет на {pct_over}% понад норму. 🕳️",
@@ -123,6 +137,10 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         ],
     },
     "DE": {
+        "pacing_good_start": [
+            "Guter Start! Kaum Ausgaben bisher. 🌱",
+            "Saubere Woche — weiter so! ✨",
+        ],
         "pacing_over": [
             "⚠️ {pct_over}% über Budget! Kürze {top_cat}.",
             "{top_cat} fraß Budget um {pct_over}%. 🕳️",
@@ -215,9 +233,9 @@ def _build_context(
     pct_used = int(round(pace * 100))
     pct_over = max(0, pct_used - 100)
     budget_remaining = round(max(0.0, weekly_limit - week_spending), 2)
-    potential_saving = round(
-        sum(tx.amount for tx in week_expenses if tx.category.name == top_cat) * 0.15, 2
-    )
+    top_cat_spend = sum(tx.amount for tx in week_expenses if tx.category.name == top_cat)
+    potential_saving = round(top_cat_spend * 0.15, 2)
+    saving_viable = top_cat_spend >= _SAVINGS_THRESHOLD and potential_saving > 0.0
 
     lang = profile.language.upper()
     day_names = _DAY_NAMES.get(lang, _DAY_NAMES["EN"])
@@ -232,6 +250,7 @@ def _build_context(
         "goal": round(profile.monthly_spending_goal, 2),
         "currency": profile.currency,
         "potential_saving": potential_saving,
+        "saving_viable": saving_viable,
         "budget_remaining": budget_remaining,
         "predicted_balance": predicted_balance,
         "day_name": day_name,
@@ -259,6 +278,9 @@ def generate_nudge(
         key = tier
     else:
         key = "on_track"
+
+    if key == "pacing_good" and not ctx.get("saving_viable", True):
+        key = "pacing_good_start"
 
     template = random.choice(lang_templates[key])
     try:
