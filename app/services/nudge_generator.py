@@ -16,6 +16,15 @@ _SAVINGS_BONUS_LABEL: dict[str, str] = {
     "DE": "Sparbonus",
 }
 
+
+def _fmt(value: float) -> str:
+    """Format to at most 2 decimal places, stripping trailing zeros."""
+    s = f"{value:.2f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
+
+
 _TEMPLATES: dict[str, dict[str, list[str]]] = {
     "EN": {
         "pacing_good_start": [
@@ -280,9 +289,9 @@ def _build_context(
     lang_key = profile.language.upper()
     bonus_label = _SAVINGS_BONUS_LABEL.get(lang_key, _SAVINGS_BONUS_LABEL["EN"])
     if savings_bonus > 0.01:
-        reserve_display = f"{budget_remaining:.2f} + {savings_bonus:.2f} ({bonus_label})"
+        reserve_display = f"{_fmt(budget_remaining)} + {_fmt(savings_bonus)} ({bonus_label})"
     else:
-        reserve_display = f"{budget_remaining:.2f}"
+        reserve_display = f"{_fmt(budget_remaining)}"
 
     cat_map: dict[str, float] = defaultdict(float)
     for tx in week_expenses:
@@ -312,15 +321,15 @@ def _build_context(
         "pct_used": pct_used,
         "days_left": days_left,
         "top_cat": top_cat,
-        "effective_income": round(effective_income, 2),
-        "goal": round(profile.monthly_spending_goal, 2),
+        "effective_income": _fmt(effective_income),
+        "goal": _fmt(profile.monthly_spending_goal),
         "currency": profile.currency,
-        "potential_saving": potential_saving,
+        "potential_saving": _fmt(potential_saving),
         "saving_viable": saving_viable,
         "budget_remaining": budget_remaining,
         "savings_bonus": savings_bonus,
         "reserve_display": reserve_display,
-        "predicted_balance": predicted_balance,
+        "predicted_balance": _fmt(predicted_balance),
         "day_name": day_name,
     }
 
