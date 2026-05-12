@@ -39,15 +39,12 @@ def _ensure_db_table() -> None:
 
 
 if _USE_DB:
-    def _bg_init_content() -> None:
-        global _USE_DB
-        try:
-            _ensure_db_table()
-            logger.info("content_tracker: table ready (Neon PostgreSQL)")
-        except Exception as exc:
-            logger.warning("content_tracker: DB init failed, file fallback: %s", exc)
-            _USE_DB = False
-    threading.Thread(target=_bg_init_content, daemon=True).start()
+    try:
+        _ensure_db_table()
+        logger.info("content_tracker: using Neon PostgreSQL for state persistence")
+    except Exception as exc:
+        logger.warning("content_tracker: DB table setup failed (%s) — falling back to file", exc)
+        _USE_DB = False
 
 
 # ─── File backend ─────────────────────────────────────────────────────────────

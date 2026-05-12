@@ -31,15 +31,12 @@ def _ensure_visit_table() -> None:
 
 
 if _USE_DB:
-    def _bg_init_visits() -> None:
-        global _USE_DB
-        try:
-            _ensure_visit_table()
-            logger.info("visit_tracker: table ready (Neon PostgreSQL)")
-        except Exception as exc:
-            logger.warning("visit_tracker: DB init failed, file fallback: %s", exc)
-            _USE_DB = False
-    threading.Thread(target=_bg_init_visits, daemon=True).start()
+    try:
+        _ensure_visit_table()
+        logger.info("visit_tracker: using Neon PostgreSQL")
+    except Exception as exc:
+        logger.warning("visit_tracker: DB table setup failed (%s) — falling back to file", exc)
+        _USE_DB = False
 
 
 # ─── File backend ─────────────────────────────────────────────────────────────
