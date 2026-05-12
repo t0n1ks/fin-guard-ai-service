@@ -26,7 +26,7 @@ _lock = threading.Lock()
 
 def _ensure_db_table() -> None:
     import psycopg2
-    with psycopg2.connect(_DB_URL) as conn:
+    with psycopg2.connect(_DB_URL, connect_timeout=5) as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS tamagotchi_daily_state (
@@ -39,12 +39,15 @@ def _ensure_db_table() -> None:
 
 
 if _USE_DB:
-    try:
-        _ensure_db_table()
-        logger.info("content_tracker: using Neon PostgreSQL for state persistence")
-    except Exception as exc:
-        logger.warning("content_tracker: DB table setup failed (%s) — falling back to file", exc)
-        _USE_DB = False
+    def _bg_init_content() -> None:
+        global _USE_DB
+        try:
+            _ensure_db_table()
+            logger.info("content_tracker: table ready (Neon PostgreSQL)")
+        except Exception as exc:
+            logger.warning("content_tracker: DB init failed, file fallback: %s", exc)
+            _USE_DB = False
+    threading.Thread(target=_bg_init_content, daemon=True).start()
 
 
 # ─── File backend ─────────────────────────────────────────────────────────────
