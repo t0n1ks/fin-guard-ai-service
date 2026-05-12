@@ -8,7 +8,10 @@ import tempfile
 import threading
 from datetime import date as date_type
 
-from app.data.content import FACTS, JOKES
+from app.data.content import ENCOURAGEMENTS, FACTS, JOKES
+
+# Maps Python content-dict keys to frontend ISO codes
+_LANG_NORM: dict[str, str] = {"EN": "en", "DE": "de", "RU": "ru", "UA": "uk"}
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +164,19 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
     random.shuffle(unseen_jokes)
     random.shuffle(unseen_facts)
 
+    # Encouragement no-repeat: reset cross-language but preserve cross-day
+    if same_lang:
+        seen_encouragements: list = existing.get("seen_encouragements", [])
+    else:
+        seen_encouragements = []
+
+    all_encouragements = list(ENCOURAGEMENTS.get(language, ENCOURAGEMENTS["EN"]))
+    unseen_encouragements = [e for e in all_encouragements if e not in seen_encouragements]
+    if not unseen_encouragements:
+        seen_encouragements = []
+        unseen_encouragements = list(all_encouragements)
+    random.shuffle(unseen_encouragements)
+
     state[key] = {
         "date": today,
         "language": language,
@@ -170,6 +186,8 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         "facts_served": 0,
         "seen_jokes": seen_jokes,
         "seen_facts": seen_facts,
+        "encouragement_queue": unseen_encouragements,
+        "seen_encouragements": seen_encouragements,
         # Preserve pending advice only when it was generated in the same language today
         "pending_advice": existing.get("pending_advice", "") if (same_day and same_lang) else "",
         "advice_consumed": existing.get("advice_consumed", True) if (same_day and same_lang) else True,
@@ -179,18 +197,31 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
-def get_next_joke(user_id: int, language: str) -> str | None:
+def _build_translations(text: str, source: dict[str, list[str]], language: str) -> dict[str, str]:
+    """Return all-language translations for a content item located by its text in the source dict."""
+    lang_up = language.upper()
+    source_list = list(source.get(lang_up, source.get("EN", [])))
+    try:
+        idx = source_list.index(text)
+    except ValueError:
+        return {_LANG_NORM.get(lang_up, lang_up.lower()): _cap(text)}
+    translations: dict[str, str] = {}
+    for code, items in source.items():
+        if idx < len(items):
+            iso = _LANG_NORM.get(code, code.lower())
+            translations[iso] = _cap(items[idx])
+    return translations
+
+
+def get_next_joke(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
     with _lock:
         state = _load_state()
         today = date_type.today().isoformat()
         _ensure_user_state(state, user_id, language, today)
         u = state[str(user_id)]
 
-        if u["jokes_served"] >= 3:
-            return None
-
-        if not u["joke_queue"]:
-            return None
+        if u["jokes_served"] >= 3 or not u["joke_queue"]:
+            return None, {}
 
         joke = u["joke_queue"].pop(0)
         u["jokes_served"] += 1
@@ -198,21 +229,18 @@ def get_next_joke(user_id: int, language: str) -> str | None:
         if joke not in seen:
             seen.append(joke)
         _save_state(state)
-        return _cap(joke)
+        return _cap(joke), _build_translations(joke, JOKES, language)
 
 
-def get_next_fact(user_id: int, language: str) -> str | None:
+def get_next_fact(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
     with _lock:
         state = _load_state()
         today = date_type.today().isoformat()
         _ensure_user_state(state, user_id, language, today)
         u = state[str(user_id)]
 
-        if u["facts_served"] >= 5:
-            return None
-
-        if not u["fact_queue"]:
-            return None
+        if u["facts_served"] >= 5 or not u["fact_queue"]:
+            return None, {}
 
         fact = u["fact_queue"].pop(0)
         u["facts_served"] += 1
@@ -220,7 +248,32 @@ def get_next_fact(user_id: int, language: str) -> str | None:
         if fact not in seen:
             seen.append(fact)
         _save_state(state)
-        return _cap(fact)
+        return _cap(fact), _build_translations(fact, FACTS, language)
+
+
+def get_next_encouragement(user_id: int, language: str) -> str:
+    """Return the next unseen encouragement for the user, cycling through all before repeating."""
+    with _lock:
+        state = _load_state()
+        today = date_type.today().isoformat()
+        _ensure_user_state(state, user_id, language, today)
+        u = state[str(user_id)]
+
+        queue: list = u.get("encouragement_queue", [])
+        if not queue:
+            # Exhausted — rebuild and reshuffle
+            all_enc = list(ENCOURAGEMENTS.get(language.upper(), ENCOURAGEMENTS["EN"]))
+            random.shuffle(all_enc)
+            u["encouragement_queue"] = all_enc
+            u["seen_encouragements"] = []
+            queue = u["encouragement_queue"]
+
+        enc = queue.pop(0)
+        seen_enc: list = u.setdefault("seen_encouragements", [])
+        if enc not in seen_enc:
+            seen_enc.append(enc)
+        _save_state(state)
+        return _cap(enc)
 
 
 def get_pending_advice(user_id: int) -> str | None:

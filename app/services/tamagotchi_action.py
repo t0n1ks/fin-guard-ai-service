@@ -5,13 +5,13 @@ from datetime import datetime
 
 from app.data.content import (
     CHEERFUL_GREETINGS,
-    ENCOURAGEMENTS,
     GREETINGS,
     GRUMPY_GREETINGS,
 )
 from app.models.response import NextActionResponse
 from app.services.content_tracker import (
     get_greeting_served,
+    get_next_encouragement,
     get_next_fact,
     get_next_joke,
     get_pending_advice,
@@ -37,18 +37,29 @@ def _enforce_length(text: str, limit: int = 140) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def _build_response(type_: str, content: str | None, hint: str, language: str) -> NextActionResponse:
+def _build_response(
+    type_: str,
+    content: str | None,
+    hint: str,
+    language: str,
+    translations: dict[str, str] | None = None,
+    user_id: int | None = None,
+) -> NextActionResponse:
     text = (content or "").strip()
-    if len(text) < 5:
-        enc = ENCOURAGEMENTS.get(language.upper(), ENCOURAGEMENTS["EN"])
-        text = random.choice(enc)
-    return NextActionResponse(type=type_, content=_enforce_length(text), animation_hint=hint)
+    if len(text) < 5 and user_id is not None:
+        text = get_next_encouragement(user_id, language)
+    return NextActionResponse(
+        type=type_,
+        content=_enforce_length(text),
+        animation_hint=hint,
+        all_translations=translations if translations else None,
+    )
 
 
 def get_next_action(user_id: int, language: str) -> NextActionResponse:
     advice = get_pending_advice(user_id)
     if advice is not None:
-        return _build_response("ADVICE", advice, "COIN_COLLECT", language)
+        return _build_response("ADVICE", advice, "COIN_COLLECT", language, user_id=user_id)
 
     # Time-aware / mood-aware greeting — shown once per day on first interaction
     if not get_greeting_served(user_id):
@@ -65,7 +76,7 @@ def get_next_action(user_id: int, language: str) -> NextActionResponse:
 
         greeting = random.choice(pool)
         mark_greeting_served(user_id)
-        return _build_response("GREETING", greeting, "FLY_BY_MOON", language)
+        return _build_response("GREETING", greeting, "FLY_BY_MOON", language, user_id=user_id)
 
     # 30% jokes / 70% facts — probabilistic ordering, fall through if one pool exhausted
     if random.random() < 0.3:
@@ -75,18 +86,18 @@ def get_next_action(user_id: int, language: str) -> NextActionResponse:
         first_fn, first_type, first_hint = get_next_fact, "FACT", "COIN_COLLECT"
         second_fn, second_type, second_hint = get_next_joke, "JOKE", "COW_ABDUCTION"
 
-    content = first_fn(user_id, language)
+    content, translations = first_fn(user_id, language)
     if content is not None:
-        return _build_response(first_type, content, first_hint, language)
+        return _build_response(first_type, content, first_hint, language, translations, user_id=user_id)
 
-    content = second_fn(user_id, language)
+    content, translations = second_fn(user_id, language)
     if content is not None:
-        return _build_response(second_type, content, second_hint, language)
+        return _build_response(second_type, content, second_hint, language, translations, user_id=user_id)
 
     # Encouragement when daily limits are exhausted — 60% chance, else animation
     if random.random() < 0.6:
-        lang_encouragements = ENCOURAGEMENTS.get(language.upper(), ENCOURAGEMENTS["EN"])
-        return _build_response("ENCOURAGEMENT", random.choice(lang_encouragements), "COIN_COLLECT", language)
+        enc = get_next_encouragement(user_id, language)
+        return _build_response("ENCOURAGEMENT", enc, "COIN_COLLECT", language, user_id=user_id)
 
     return NextActionResponse(
         type="RANDOM_ANIMATION",

@@ -17,3 +17,6 @@ class NextActionResponse(BaseModel):
     type: str
     content: Optional[str] = None
     animation_hint: str
+    # All 4 language versions keyed by ISO code (en/de/ru/uk).
+    # Present for FACT and JOKE types so the frontend can re-render on language switch.
+    all_translations: Optional[dict[str, str]] = None
