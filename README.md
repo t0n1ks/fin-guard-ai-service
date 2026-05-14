@@ -42,6 +42,22 @@ All inter-service calls are authenticated with a shared `X-Brain-API-Key` header
 
 ---
 
+## ML & Analysis Pipeline
+
+Each call to `POST /v1/analyze-behavior` runs five parallel computations — all deterministic, all in-process, no external ML service required:
+
+| Component | Method | Output |
+|---|---|---|
+| **End-of-month forecast** | `scikit-learn` `LinearRegression` on cumulative daily expenses (≥7 data points) or simple daily average (< 7) | `predicted_end_of_month_balance: float` |
+| **Financial health score** | Weighted composite of 4 normalised components: expense/income ratio (40%), goal adherence (30%), category diversity (20%), savings rate (10%) | `financial_health_score: int` (1–100) |
+| **Sustainability score** | Case-insensitive keyword matching: "green" categories (transit, health, education, pharmacy) vs "negative" categories (fast food, gambling, alcohol) with a 1.5× penalty on negative | `sustainability_score: int` (1–100) |
+| **Spending tier** | Rule-based classification: payday detection, weekly pace vs monthly limit, category diversity check | `spending_tier: str` (6 states) |
+| **Multilingual nudge** | Template selection by tier + risk flags; variable substitution (rate, days left, top category); 99-char limit enforced | `smart_nudge: str` (EN/DE/RU/UA) |
+
+The mood mapping (`thriving / content / worried / stressed / exhausted`) is derived from the composite health score after all five components are computed.
+
+---
+
 ## Features
 
 ### Financial Scoring
@@ -49,7 +65,7 @@ All inter-service calls are authenticated with a shared `X-Brain-API-Key` header
 |---|---|---|
 | `financial_health_score` | 1–100 | Composite: spending pace + debt ratio + income stability |
 | `sustainability_score` | 1–100 | Ratio of "green" (recurring, essential) vs. volatile spending |
-| `predicted_end_of_month_balance` | float | Linear regression over daily expense totals |
+| `predicted_end_of_month_balance` | float | Linear regression over daily expense totals; falls back to daily average with < 7 data points |
 
 ### Tamagotchi Content Engine
 - **ADVICE** — AI-generated personalised nudge based on current spending tier and risk flags; stored as pending until the UFO is idle
