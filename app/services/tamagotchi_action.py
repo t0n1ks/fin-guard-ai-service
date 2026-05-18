@@ -4,16 +4,20 @@ import random
 from datetime import datetime
 
 from app.data.content import (
+    BUDGET_TIPS,
     CHEERFUL_GREETINGS,
     GREETINGS,
     GRUMPY_GREETINGS,
+    STATISTICS,
 )
 from app.models.response import NextActionResponse
 from app.services.content_tracker import (
     get_greeting_served,
+    get_next_budget_tip,
     get_next_encouragement,
     get_next_fact,
     get_next_joke,
+    get_next_statistic,
     get_pending_advice,
     mark_greeting_served,
 )
@@ -94,7 +98,23 @@ def get_next_action(user_id: int, language: str) -> NextActionResponse:
     if content is not None:
         return _build_response(second_type, content, second_hint, language, translations, user_id=user_id)
 
-    # Encouragement when daily limits are exhausted — 60% chance, else animation
+    # Budget tips / statistics when joke+fact daily limits are exhausted
+    if random.random() < 0.5:
+        tip_fn, tip_type = get_next_budget_tip, "BUDGET_TIPS"
+        stat_fn, stat_type = get_next_statistic, "STATISTICS"
+    else:
+        tip_fn, tip_type = get_next_statistic, "STATISTICS"  # type: ignore[assignment]
+        stat_fn, stat_type = get_next_budget_tip, "BUDGET_TIPS"  # type: ignore[assignment]
+
+    content, translations = tip_fn(user_id, language)
+    if content is not None:
+        return _build_response(tip_type, content, "COIN_COLLECT", language, translations, user_id=user_id)
+
+    content, translations = stat_fn(user_id, language)
+    if content is not None:
+        return _build_response(stat_type, content, "COIN_COLLECT", language, translations, user_id=user_id)
+
+    # Encouragement when all content pools exhausted — 60% chance, else animation
     if random.random() < 0.6:
         enc = get_next_encouragement(user_id, language)
         return _build_response("ENCOURAGEMENT", enc, "COIN_COLLECT", language, user_id=user_id)

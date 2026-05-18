@@ -8,7 +8,7 @@ import tempfile
 import threading
 from datetime import date as date_type
 
-from app.data.content import ENCOURAGEMENTS, FACTS, JOKES
+from app.data.content import BUDGET_TIPS, ENCOURAGEMENTS, FACTS, JOKES, STATISTICS
 
 # Maps Python content-dict keys to frontend ISO codes
 _LANG_NORM: dict[str, str] = {"EN": "en", "DE": "de", "RU": "ru", "UA": "uk"}
@@ -134,25 +134,34 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
             existing["seen_jokes"] = []
         if "seen_facts" not in existing:
             existing["seen_facts"] = []
+        if "seen_budget_tips" not in existing:
+            existing["seen_budget_tips"] = []
+        if "seen_stats" not in existing:
+            existing["seen_stats"] = []
         state[key] = existing
         return
 
     all_jokes = list(JOKES.get(language, JOKES["EN"]))
     all_facts = list(FACTS.get(language, FACTS["EN"]))
+    all_budget_tips = list(BUDGET_TIPS.get(language, BUDGET_TIPS["EN"]))
+    all_stats = list(STATISTICS.get(language, STATISTICS["EN"]))
 
     if same_lang:
         # Carry cross-day seen lists forward
         seen_jokes: list = existing.get("seen_jokes", [])
         seen_facts: list = existing.get("seen_facts", [])
+        seen_budget_tips: list = existing.get("seen_budget_tips", [])
+        seen_stats: list = existing.get("seen_stats", [])
     else:
         # Language changed — start fresh
         seen_jokes = []
         seen_facts = []
+        seen_budget_tips = []
+        seen_stats = []
 
     # Build today's queue from unseen items only
     unseen_jokes = [j for j in all_jokes if j not in seen_jokes]
     if not unseen_jokes:
-        # Full cycle complete — reset and serve every joke again
         seen_jokes = []
         unseen_jokes = list(all_jokes)
 
@@ -161,8 +170,20 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         seen_facts = []
         unseen_facts = list(all_facts)
 
+    unseen_budget_tips = [b for b in all_budget_tips if b not in seen_budget_tips]
+    if not unseen_budget_tips:
+        seen_budget_tips = []
+        unseen_budget_tips = list(all_budget_tips)
+
+    unseen_stats = [s for s in all_stats if s not in seen_stats]
+    if not unseen_stats:
+        seen_stats = []
+        unseen_stats = list(all_stats)
+
     random.shuffle(unseen_jokes)
     random.shuffle(unseen_facts)
+    random.shuffle(unseen_budget_tips)
+    random.shuffle(unseen_stats)
 
     # Encouragement no-repeat: reset cross-language but preserve cross-day
     if same_lang:
@@ -182,10 +203,16 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         "language": language,
         "joke_queue": unseen_jokes,
         "fact_queue": unseen_facts,
+        "budget_tip_queue": unseen_budget_tips,
+        "stat_queue": unseen_stats,
         "jokes_served": 0,
         "facts_served": 0,
+        "budget_tips_served": 0,
+        "stats_served": 0,
         "seen_jokes": seen_jokes,
         "seen_facts": seen_facts,
+        "seen_budget_tips": seen_budget_tips,
+        "seen_stats": seen_stats,
         "encouragement_queue": unseen_encouragements,
         "seen_encouragements": seen_encouragements,
         # Preserve pending advice only when it was generated in the same language today
@@ -337,3 +364,41 @@ def mark_greeting_served(user_id: int) -> None:
         u["greeting_served"] = True
         state[key] = u
         _save_state(state)
+
+
+def get_next_budget_tip(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
+    with _lock:
+        state = _load_state()
+        today = date_type.today().isoformat()
+        _ensure_user_state(state, user_id, language, today)
+        u = state[str(user_id)]
+
+        if u.get("budget_tips_served", 0) >= 3 or not u.get("budget_tip_queue"):
+            return None, {}
+
+        tip = u["budget_tip_queue"].pop(0)
+        u["budget_tips_served"] = u.get("budget_tips_served", 0) + 1
+        seen: list = u.setdefault("seen_budget_tips", [])
+        if tip not in seen:
+            seen.append(tip)
+        _save_state(state)
+        return _cap(tip), _build_translations(tip, BUDGET_TIPS, language)
+
+
+def get_next_statistic(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
+    with _lock:
+        state = _load_state()
+        today = date_type.today().isoformat()
+        _ensure_user_state(state, user_id, language, today)
+        u = state[str(user_id)]
+
+        if u.get("stats_served", 0) >= 5 or not u.get("stat_queue"):
+            return None, {}
+
+        stat = u["stat_queue"].pop(0)
+        u["stats_served"] = u.get("stats_served", 0) + 1
+        seen: list = u.setdefault("seen_stats", [])
+        if stat not in seen:
+            seen.append(stat)
+        _save_state(state)
+        return _cap(stat), _build_translations(stat, STATISTICS, language)
