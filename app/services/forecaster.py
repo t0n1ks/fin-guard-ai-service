@@ -9,6 +9,37 @@ from sklearn.linear_model import LinearRegression
 from app.models.request import TransactionItem, UserProfile
 
 
+def predict_savings_accumulation(
+    transactions: list[TransactionItem],
+    analysis_date: date,
+    profile: UserProfile,
+) -> float:
+    """
+    Project total accumulated savings balance at the next payday.
+    Sums net balances from all past complete months in the dataset,
+    then adds the projected current-cycle net.
+    Works within the 90-day window sent by the Go backend.
+    """
+    current_key = (analysis_date.year, analysis_date.month)
+
+    # Net per calendar month from available history
+    monthly_net: dict[tuple[int, int], float] = defaultdict(float)
+    for tx in transactions:
+        key = (tx.date.year, tx.date.month)
+        delta = tx.amount if tx.type == "income" else -tx.amount
+        monthly_net[key] += delta
+
+    # Historical months (complete months before current)
+    historical = sum(v for k, v in monthly_net.items() if k < current_key)
+
+    # Current month projected net
+    current_projected = predict_end_of_month_balance(
+        transactions, analysis_date, profile.expected_salary
+    )
+
+    return round(historical + current_projected, 2)
+
+
 def predict_end_of_month_balance(
     transactions: list[TransactionItem],
     analysis_date: date,

@@ -43,11 +43,15 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
     predicted_balance = forecaster.predict_end_of_month_balance(
         transactions, today, profile.expected_salary
     )
+    predicted_savings = forecaster.predict_savings_accumulation(
+        transactions, today, profile
+    )
     mood = mood_engine.get_tamagotchi_mood(health_score)
     tier = tier_calculator.compute_spending_tier(transactions, profile, today)
     nudge = nudge_generator.generate_nudge(
         tier, risk_flags, profile, transactions, today, predicted_balance,
         user_categories=body.user_categories,
+        predicted_savings_balance=predicted_savings,
     )
 
     store_pending_advice(user_id=profile.user_id, advice=nudge)
@@ -57,6 +61,7 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
         financial_health_score=health_score,
         sustainability_score=sustainability,
         predicted_end_of_month_balance=predicted_balance,
+        predicted_savings_balance=predicted_savings,
         tamagotchi_mood=mood,
         smart_nudge=nudge,
         spending_tier=tier,

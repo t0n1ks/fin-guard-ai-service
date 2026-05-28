@@ -196,6 +196,29 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
     },
 }
 
+_SAVINGS_MILESTONE: dict[str, list[str]] = {
+    "EN": [
+        "🚀 You've stacked {savings} {currency}! Ever thought about investing? 📈",
+        "💰 {savings} {currency} saved! An emergency fund is a great first step.",
+        "✨ {savings} {currency} banked — treat yourself to that trip! 🌍",
+    ],
+    "RU": [
+        "🚀 Накоплено {savings} {currency}! Может, пора инвестировать? 📈",
+        "💰 {savings} {currency} в копилке! Отличный резервный фонд.",
+        "✨ {savings} {currency} отложено — может, в путешествие? 🌍",
+    ],
+    "UA": [
+        "🚀 Накопичено {savings} {currency}! Час інвестувати? 📈",
+        "💰 {savings} {currency} у скарбничці! Чудовий резервний фонд.",
+        "✨ {savings} {currency} відкладено — може, в подорож? 🌍",
+    ],
+    "DE": [
+        "🚀 {savings} {currency} angespart! Zeit zu investieren? 📈",
+        "💰 {savings} {currency} zurückgelegt! Ein Notgroschen lohnt sich.",
+        "✨ {savings} {currency} gespart — wie wäre es mit einer Reise? 🌍",
+    ],
+}
+
 _TOP_CAT_FALLBACK: dict[str, str] = {
     "EN": "expenses",
     "RU": "расходы",
@@ -342,10 +365,26 @@ def generate_nudge(
     analysis_date: date,
     predicted_balance: float,
     user_categories: list[str] | None = None,
+    predicted_savings_balance: float = 0.0,
 ) -> str:
     ctx = _build_context(transactions, profile, analysis_date, predicted_balance, user_categories=user_categories)
     lang = profile.language.upper()
     lang_templates = _TEMPLATES.get(lang, _TEMPLATES["EN"])
+
+    # Savings milestone: fire ~30% of the time when significant savings are projected
+    savings_threshold = max(300.0, profile.monthly_spending_goal * 2)
+    if (
+        predicted_savings_balance >= savings_threshold
+        and "no_income" not in risk_flags
+        and random.random() < 0.30
+    ):
+        milestone_pool = _SAVINGS_MILESTONE.get(lang, _SAVINGS_MILESTONE["EN"])
+        template = random.choice(milestone_pool)
+        try:
+            result = template.format(savings=_fmt(predicted_savings_balance), currency=profile.currency)
+            return result if len(result) <= 99 else result[:99] + "…"
+        except KeyError:
+            pass
 
     if "no_income" in risk_flags and profile.expected_salary == 0:
         key = "no_income_logged"

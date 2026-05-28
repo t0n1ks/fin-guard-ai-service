@@ -7,6 +7,7 @@ class AnalyzeBehaviorResponse(BaseModel):
     financial_health_score: int
     sustainability_score: int
     predicted_end_of_month_balance: float
+    predicted_savings_balance: float = 0.0
     tamagotchi_mood: str
     smart_nudge: str
     spending_tier: str
