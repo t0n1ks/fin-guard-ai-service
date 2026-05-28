@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from app.models.request import TransactionItem, UserProfile
+from app.models.request import TransactionItem, UserProfile, SalaryCycleInfo
 
 _SAVINGS_THRESHOLD = 5.0  # EUR — minimum category spend before suggesting a savings tip
 
@@ -219,6 +219,52 @@ _SAVINGS_MILESTONE: dict[str, list[str]] = {
     ],
 }
 
+_SAVINGS_DIP: dict[str, list[str]] = {
+    "EN": [
+        "⚠️ Last cycle you dipped into savings. Let's protect them this time! 🛡️",
+        "Savings took a hit last cycle. Fixed expenses may be too high — review them! 📋",
+        "Last month was costly. Time to guard those savings more fiercely. 💰",
+    ],
+    "RU": [
+        "⚠️ В прошлом цикле задели накопления. Сейчас берегите их! 🛡️",
+        "Накопления пострадали. Может, пересмотрим фиксированные расходы? 📋",
+        "Предыдущий месяц был затратным. Задумаемся о сокращении подписок? 💰",
+    ],
+    "UA": [
+        "⚠️ Минулий цикл торкнувся заощаджень. Цього разу захистімо їх! 🛡️",
+        "Заощадження постраждали. Може, переглянемо фіксовані витрати? 📋",
+        "Попередній місяць був витратним. Можливо, скоротимо підписки? 💰",
+    ],
+    "DE": [
+        "⚠️ Letzter Zyklus griff Ersparnisse an. Diesmal schützen wir sie! 🛡️",
+        "Ersparnisse litten. Fixkosten könnten zu hoch sein — überprüfe sie! 📋",
+        "Letzter Monat war teuer. Zeit, die Ersparnisse besser zu schützen. 💰",
+    ],
+}
+
+_HIGH_FIXED: dict[str, list[str]] = {
+    "EN": [
+        "Fixed costs eat {pct}% of income. Any subscriptions to cut? 🔍",
+        "Your committed expenses are {pct}% of salary. Room to renegotiate? 💬",
+        "High fixed load ({pct}%). Small cuts here compound fast! ✂️",
+    ],
+    "RU": [
+        "Фикс. расходы съедают {pct}% дохода. Есть что сократить? 🔍",
+        "Обязательные расходы — {pct}% от зарплаты. Время пересмотреть? 💬",
+        "Высокая нагрузка ({pct}%). Небольшие сокращения дают результат! ✂️",
+    ],
+    "UA": [
+        "Фікс. витрати — {pct}% доходу. Є що скоротити? 🔍",
+        "Зобов'язані витрати — {pct}% зарплати. Час переглянути? 💬",
+        "Висока фіксована нагрузка ({pct}%). Невеликі скорочення дають ефект! ✂️",
+    ],
+    "DE": [
+        "Fixkosten fressen {pct}% des Einkommens. Etwas kürzen? 🔍",
+        "Pflichtausgaben sind {pct}% des Gehalts. Neuverhandlung möglich? 💬",
+        "Hohe Fixlast ({pct}%). Kleine Kürzungen wirken schnell! ✂️",
+    ],
+}
+
 _TOP_CAT_FALLBACK: dict[str, str] = {
     "EN": "expenses",
     "RU": "расходы",
@@ -366,12 +412,39 @@ def generate_nudge(
     predicted_balance: float,
     user_categories: list[str] | None = None,
     predicted_savings_balance: float = 0.0,
+    salary_cycle: SalaryCycleInfo | None = None,
 ) -> str:
     ctx = _build_context(transactions, profile, analysis_date, predicted_balance, user_categories=user_categories)
     lang = profile.language.upper()
     lang_templates = _TEMPLATES.get(lang, _TEMPLATES["EN"])
 
-    # Savings milestone: fire ~30% of the time when significant savings are projected
+    # ── Cycle-aware proactive nudges (highest priority) ───────────────────
+    if salary_cycle is not None and "no_income" not in risk_flags:
+        # Nudge: savings dipped last cycle (previous_savings proxy: predicted < savings_limit)
+        savings_dipped = (
+            predicted_savings_balance < salary_cycle.savings_limit * 0.9
+            and salary_cycle.savings_limit > 0
+            and random.random() < 0.50
+        )
+        if savings_dipped:
+            pool = _SAVINGS_DIP.get(lang, _SAVINGS_DIP["EN"])
+            result = random.choice(pool)
+            return result if len(result) <= 99 else result[:99] + "…"
+
+        # Nudge: fixed expenses are high (>60% of total income)
+        total_fixed = salary_cycle.fixed_needs_total + salary_cycle.fixed_wants_total
+        if salary_cycle.total_income > 0:
+            fixed_pct = int(round(total_fixed / salary_cycle.total_income * 100))
+            if fixed_pct >= 60 and random.random() < 0.40:
+                pool = _HIGH_FIXED.get(lang, _HIGH_FIXED["EN"])
+                template = random.choice(pool)
+                try:
+                    result = template.format(pct=fixed_pct)
+                    return result if len(result) <= 99 else result[:99] + "…"
+                except KeyError:
+                    pass
+
+    # ── Savings milestone: fire ~30% of the time ──────────────────────────
     savings_threshold = max(300.0, profile.monthly_spending_goal * 2)
     if (
         predicted_savings_balance >= savings_threshold

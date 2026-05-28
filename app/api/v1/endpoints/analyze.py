@@ -52,6 +52,7 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
         tier, risk_flags, profile, transactions, today, predicted_balance,
         user_categories=body.user_categories,
         predicted_savings_balance=predicted_savings,
+        salary_cycle=body.salary_cycle,
     )
 
     store_pending_advice(user_id=profile.user_id, advice=nudge)

@@ -48,8 +48,23 @@ class UserProfile(BaseModel):
         return v  # type: ignore[return-value]
 
 
+class SalaryCycleInfo(BaseModel):
+    """Optional — present only when the user has set up a salary cycle."""
+    total_income: float = 0.0
+    needs_pct: float = 50.0
+    wants_pct: float = 30.0
+    savings_pct: float = 20.0
+    savings_limit: float = 0.0
+    fixed_needs_total: float = 0.0
+    fixed_wants_total: float = 0.0
+    var_needs_budget: float = 0.0
+    var_wants_budget: float = 0.0
+    cycle_start_at: Optional[str] = None  # ISO timestamp string
+
+
 class AnalyzeBehaviorRequest(BaseModel):
     user_profile: UserProfile
     transactions: list[TransactionItem]
     analysis_date: date
     user_categories: list[str] = Field(default_factory=list)
+    salary_cycle: Optional[SalaryCycleInfo] = None
