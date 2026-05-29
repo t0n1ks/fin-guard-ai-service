@@ -113,21 +113,41 @@ def predict_savings_accumulation(
 ) -> float:
     """
     Estimate total accumulated savings balance (historical + projected current cycle).
+
+    When a salary cycle is active the historical baseline is everything that
+    happened strictly BEFORE the cycle started — regardless of calendar month.
+    This eliminates the calendar-month/cycle-boundary mismatch that caused
+    incorrect projections for backdated cycles.
     """
-    current_key = (analysis_date.year, analysis_date.month)
     fixed_cat_id = salary_cycle.fixed_exp_category_id if salary_cycle else 0
 
-    # Net per calendar month — exclude fixed expenses from all sums so the savings
-    # projection reflects only the discretionary portion of the cycle budget.
-    monthly_net: dict[tuple[int, int], float] = defaultdict(float)
-    for tx in transactions:
-        if _is_fixed(tx, fixed_cat_id):
-            continue
-        key = (tx.date.year, tx.date.month)
-        delta = tx.amount if tx.type == "income" else -tx.amount
-        monthly_net[key] += delta
+    cycle_start: Optional[date] = None
+    if salary_cycle and salary_cycle.cycle_start_at:
+        try:
+            cycle_start = date.fromisoformat(salary_cycle.cycle_start_at[:10])
+        except (ValueError, TypeError):
+            pass
 
-    historical = sum(v for k, v in monthly_net.items() if k < current_key)
+    if cycle_start is not None:
+        # Cycle-aware: historical net = everything before this cycle's exact start date.
+        historical = sum(
+            (tx.amount if tx.type == "income" else -tx.amount)
+            for tx in transactions
+            if not _is_fixed(tx, fixed_cat_id)
+            and tx.date < cycle_start
+        )
+    else:
+        # Legacy calendar-month path for users without a salary cycle.
+        current_key = (analysis_date.year, analysis_date.month)
+        monthly_net: dict[tuple[int, int], float] = defaultdict(float)
+        for tx in transactions:
+            if _is_fixed(tx, fixed_cat_id):
+                continue
+            key = (tx.date.year, tx.date.month)
+            delta = tx.amount if tx.type == "income" else -tx.amount
+            monthly_net[key] += delta
+        historical = sum(v for k, v in monthly_net.items() if k < current_key)
+
     current_projected = predict_end_of_month_balance(
         transactions, analysis_date, profile.expected_salary, salary_cycle
     )
@@ -171,24 +191,29 @@ def _cycle_prediction(
 
     # Real cycle length from next_payday when available; else 30-day default.
     cycle_total_days = 30
+    cycle_end: Optional[date] = None
     if cycle.next_payday_at:
         try:
             next_payday = date.fromisoformat(cycle.next_payday_at[:10])
             span = (next_payday - cycle_start).days
             if span >= 7:
                 cycle_total_days = span
+                cycle_end = next_payday
         except (ValueError, TypeError):
             pass
 
     # Variable allowance = net discretionary budget for this cycle.
     discretionary = (cycle.var_needs_budget + cycle.var_wants_budget) or cycle.total_income * 0.8
 
+    # Filter strictly to [cycle_start, cycle_end] — excludes transactions from
+    # before the cycle (backdated prior cycles) and after next_payday (future cycles).
     spent_variable = sum(
         tx.amount
         for tx in transactions
         if tx.type == "expense"
         and not _is_fixed(tx, fixed_cat_id)
         and tx.date >= cycle_start
+        and (cycle_end is None or tx.date <= cycle_end)
     )
     remaining_allowance = max(0.0, discretionary - spent_variable)
 
