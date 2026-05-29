@@ -41,10 +41,10 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
     )
     sustainability = sustainability_scorer.compute_sustainability_score(transactions, today)
     predicted_balance = forecaster.predict_end_of_month_balance(
-        transactions, today, profile.expected_salary
+        transactions, today, profile.expected_salary, salary_cycle=body.salary_cycle
     )
     predicted_savings = forecaster.predict_savings_accumulation(
-        transactions, today, profile
+        transactions, today, profile, salary_cycle=body.salary_cycle
     )
     mood = mood_engine.get_tamagotchi_mood(health_score)
     tier = tier_calculator.compute_spending_tier(transactions, profile, today)

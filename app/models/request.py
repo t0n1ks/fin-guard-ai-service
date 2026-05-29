@@ -59,6 +59,7 @@ class SalaryCycleInfo(BaseModel):
     fixed_wants_total: float = 0.0
     var_needs_budget: float = 0.0
     var_wants_budget: float = 0.0
+    fixed_exp_category_id: int = 0  # DB category ID for Fixed Payments transactions
     cycle_start_at: Optional[str] = None  # ISO timestamp string
 
 
