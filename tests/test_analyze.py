@@ -285,6 +285,90 @@ def test_forecaster_no_transactions_returns_salary():
     assert result == 5000.0
 
 
+# ─── Unit: forecaster cycle path (stabilization) ─────────────────────────────
+
+from app.models.request import SalaryCycleInfo
+
+FIXED_CAT = 99
+
+
+def _cycle(**kwargs) -> SalaryCycleInfo:
+    defaults = dict(
+        total_income=2000.0,
+        needs_pct=50.0, wants_pct=30.0, savings_pct=20.0,
+        savings_limit=400.0,
+        fixed_needs_total=600.0, fixed_wants_total=15.0,
+        var_needs_budget=400.0, var_wants_budget=585.0,  # net discretionary = 985
+        fixed_exp_category_id=FIXED_CAT,
+        cycle_start_at="2026-05-01T12:00:00+00:00",
+        next_payday_at="2026-05-31T12:00:00+00:00",
+    )
+    defaults.update(kwargs)
+    return SalaryCycleInfo(**defaults)
+
+
+def _var_tx(amount: float, tx_date: date, tx_id: int = 1) -> TransactionItem:
+    """A variable expense (category id != FIXED_CAT)."""
+    return TransactionItem(
+        id=tx_id, amount=amount, category=CategoryInfo(id=1, name="Food"),
+        date=tx_date, type="expense", income_type="one_time",
+    )
+
+
+def test_cycle_day1_large_expense_no_unhinged_deficit():
+    """A single day-1 grocery run must NOT project a deficit beyond the
+    discretionary budget. This is the core regression guard."""
+    cycle = _cycle()
+    discretionary = cycle.var_needs_budget + cycle.var_wants_budget  # 985
+    remaining = discretionary - 150  # 835
+    txs = [_var_tx(150.0, date(2026, 5, 1))]
+    result = forecaster.predict_end_of_month_balance(
+        txs, date(2026, 5, 2), 2000.0, salary_cycle=cycle
+    )
+    # Total clamp guarantees the deficit never exceeds 20% of remaining allowance.
+    assert result >= -remaining * 0.2 - 0.01
+    assert result > -discretionary  # never a wild multi-thousand deficit
+
+
+def test_cycle_sanity_cap_binds_on_high_early_spend():
+    """Even spending most of the allowance early cannot project beyond the
+    remaining allowance × 1.2 pacing — so the deficit stays bounded."""
+    cycle = _cycle()
+    txs = [_var_tx(900.0, date(2026, 5, 1))]  # near-total burn on day 1
+    result = forecaster.predict_end_of_month_balance(
+        txs, date(2026, 5, 3), 2000.0, salary_cycle=cycle
+    )
+    # remaining_allowance = 985 - 900 = 85; projection capped → result >= -85*0.2 ish
+    assert result > -200.0
+
+
+def test_cycle_excludes_fixed_expenses_from_runrate():
+    """Fixed-category expenses must not inflate the projected run-rate."""
+    cycle = _cycle()
+    fixed = TransactionItem(
+        id=2, amount=600.0, category=CategoryInfo(id=FIXED_CAT, name="Fixed Payments"),
+        date=date(2026, 5, 1), type="expense", income_type="one_time",
+    )
+    with_fixed = forecaster.predict_end_of_month_balance(
+        [fixed, _var_tx(50.0, date(2026, 5, 1))], date(2026, 5, 8), 2000.0, salary_cycle=cycle
+    )
+    without_fixed = forecaster.predict_end_of_month_balance(
+        [_var_tx(50.0, date(2026, 5, 1))], date(2026, 5, 8), 2000.0, salary_cycle=cycle
+    )
+    assert abs(with_fixed - without_fixed) < 0.01
+
+
+def test_cycle_next_payday_changes_days_remaining():
+    """A shorter cycle (earlier next_payday) leaves fewer days, so less
+    projected spend remains → a higher predicted balance."""
+    long_cycle = _cycle(next_payday_at="2026-05-31T12:00:00+00:00")
+    short_cycle = _cycle(next_payday_at="2026-05-15T12:00:00+00:00")
+    txs = [_var_tx(200.0, date(2026, 5, 1)), _var_tx(200.0, date(2026, 5, 5), tx_id=2)]
+    long_res = forecaster.predict_end_of_month_balance(txs, date(2026, 5, 8), 2000.0, salary_cycle=long_cycle)
+    short_res = forecaster.predict_end_of_month_balance(txs, date(2026, 5, 8), 2000.0, salary_cycle=short_cycle)
+    assert short_res >= long_res
+
+
 # ─── Unit: tier_calculator ───────────────────────────────────────────────────
 
 

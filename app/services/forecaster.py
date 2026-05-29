@@ -136,34 +136,53 @@ def predict_savings_accumulation(
 
 # ── Internal algorithms ───────────────────────────────────────────────────────
 
+# Below this many days of cycle history, EWMA is too volatile — a single day-1
+# grocery run would be projected across the whole cycle. Use a simple capped
+# average instead until enough data accumulates.
+_SPARSE_DATA_DAYS = 5
+
+
 def _cycle_prediction(
     transactions: list[TransactionItem],
     today: date,
     cycle: SalaryCycleInfo,
 ) -> float:
     """
-    Cycle-aware prediction:
-      1. Parse cycle boundaries.
-      2. Separate variable expenses (exclude fixed_exp_category_id).
-      3. Compute EWMA daily run-rate from recent variable spend.
-      4. Apply weekend/weekday seasonality over remaining cycle days.
-      5. Return: variable_allowance − spent_variable − projected_variable_remaining.
+    Cycle-aware, stabilized prediction of end-of-cycle balance vs the variable
+    (discretionary) allowance. Fixed expenses are excluded from the run-rate.
 
-    Negative result = projected deficit vs variable budget.
-    Positive result = projected surplus (can roll into savings).
+    Stabilization guards (prevent the "unhinged deficit" regression):
+      * Sparse-data fallback: with < _SPARSE_DATA_DAYS of history, use a simple
+        average instead of EWMA (EWMA over 1–4 days is dangerously volatile).
+      * Sanity cap: the projected daily rate can never exceed
+        (remaining_allowance / days_remaining) * 1.2 — so the projection stays
+        anchored to what's actually left, producing human-readable numbers.
+
+    Returns remaining_allowance − projected_remaining_variable_spend.
+    Negative = projected deficit; positive = projected surplus.
     """
     fixed_cat_id = cycle.fixed_exp_category_id
 
-    # Parse cycle start (ISO timestamp — take date portion only)
+    # Parse cycle boundaries (ISO timestamps → date).
     try:
         cycle_start = date.fromisoformat(cycle.cycle_start_at[:10])
     except (ValueError, TypeError):
         cycle_start = today.replace(day=1)
 
-    # Variable allowance = net discretionary budget for this cycle
+    # Real cycle length from next_payday when available; else 30-day default.
+    cycle_total_days = 30
+    if cycle.next_payday_at:
+        try:
+            next_payday = date.fromisoformat(cycle.next_payday_at[:10])
+            span = (next_payday - cycle_start).days
+            if span >= 7:
+                cycle_total_days = span
+        except (ValueError, TypeError):
+            pass
+
+    # Variable allowance = net discretionary budget for this cycle.
     discretionary = (cycle.var_needs_budget + cycle.var_wants_budget) or cycle.total_income * 0.8
 
-    # Total variable expenses already incurred this cycle
     spent_variable = sum(
         tx.amount
         for tx in transactions
@@ -171,29 +190,37 @@ def _cycle_prediction(
         and not _is_fixed(tx, fixed_cat_id)
         and tx.date >= cycle_start
     )
-
     remaining_allowance = max(0.0, discretionary - spent_variable)
 
-    # Days remaining until next payday (or a 30-day default cycle)
-    # We derive it from manual_next_payday via the profile if available, but
-    # the forecaster only receives cycle data — use a 30-day cycle default.
     cycle_days_elapsed = max(1, (today - cycle_start).days)
-    cycle_total_days = 30  # conservative default
     days_remaining = max(0, cycle_total_days - cycle_days_elapsed)
-
     if days_remaining == 0:
         return round(remaining_allowance, 2)
 
-    # EWMA daily rate over the last 14 days of variable spending
-    avg_daily = _daily_variable_rate(transactions, today, cycle_start, fixed_cat_id)
+    # Choose a daily run-rate estimator.
+    if cycle_days_elapsed < _SPARSE_DATA_DAYS:
+        # Sparse: simple average of variable spend so far. Conservative and
+        # immune to EWMA's single-outlier amplification.
+        avg_daily = spent_variable / cycle_days_elapsed
+    else:
+        avg_daily = _daily_variable_rate(transactions, today, cycle_start, fixed_cat_id)
 
-    if avg_daily == 0.0:
-        # No spending history yet — assume the user will pace at the base rate
-        base_daily = discretionary / cycle_total_days
-        avg_daily = base_daily
+    if avg_daily <= 0.0:
+        # No spending yet — assume the user paces evenly across the cycle.
+        avg_daily = discretionary / cycle_total_days
 
-    # Project remaining variable spend with seasonality
+    # Sanity cap (daily): never project a daily run-rate above 1.2× the
+    # even-pacing rate of whatever allowance remains.
+    cap = (remaining_allowance / days_remaining) * 1.2
+    if cap > 0:
+        avg_daily = min(avg_daily, cap)
+
     projected_remaining = _project_spend(avg_daily, today, days_remaining)
+
+    # Sanity cap (total): seasonality must not push the projection past the
+    # remaining allowance + 20% buffer. This guarantees the projected deficit can
+    # never exceed 20% of the remaining allowance — no "unhinged" extremes.
+    projected_remaining = min(projected_remaining, remaining_allowance * 1.2)
 
     predicted_balance = remaining_allowance - projected_remaining
     return round(predicted_balance, 2)
