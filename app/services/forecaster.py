@@ -112,46 +112,41 @@ def predict_savings_accumulation(
     salary_cycle: Optional[SalaryCycleInfo] = None,
 ) -> float:
     """
-    Estimate total accumulated savings balance (historical + projected current cycle).
+    Estimate the projected savings pool balance at end of the current cycle.
 
-    When a salary cycle is active the historical baseline is everything that
-    happened strictly BEFORE the cycle started — regardless of calendar month.
-    This eliminates the calendar-month/cycle-boundary mismatch that caused
-    incorrect projections for backdated cycles.
+    Uses the authoritative pool balance supplied by the backend (saved_money_balance)
+    as the base, then adds the projected end-of-cycle variable-budget surplus.
+    This keeps savings fully decoupled from the general income/expense flow.
+
+    Falls back to deriving the current balance from savings_deposit /
+    savings_withdrawal transactions when the backend field is unavailable
+    (e.g. old Go backend versions or tests).
     """
-    fixed_cat_id = salary_cycle.fixed_exp_category_id if salary_cycle else 0
+    saved_cat_id = salary_cycle.saved_money_category_id if salary_cycle else 0
 
-    cycle_start: Optional[date] = None
-    if salary_cycle and salary_cycle.cycle_start_at:
-        try:
-            cycle_start = date.fromisoformat(salary_cycle.cycle_start_at[:10])
-        except (ValueError, TypeError):
-            pass
-
-    if cycle_start is not None:
-        # Cycle-aware: historical net = everything before this cycle's exact start date.
-        historical = sum(
-            (tx.amount if tx.type == "income" else -tx.amount)
+    # ── Current pool balance ─────────────────────────────────────────────────
+    # Prefer the authoritative pre-computed value from the backend.
+    if salary_cycle and salary_cycle.saved_money_balance != 0.0:
+        current_balance = salary_cycle.saved_money_balance
+    elif saved_cat_id > 0:
+        # Derive from transaction list: sum savings_deposit / savings_withdrawal
+        # (and legacy "income"/"expense" to the savings category).
+        current_balance = sum(
+            tx.amount if tx.type in ("income", "savings_deposit") else -tx.amount
             for tx in transactions
-            if not _is_fixed(tx, fixed_cat_id)
-            and tx.date < cycle_start
+            if tx.category.id == saved_cat_id
         )
     else:
-        # Legacy calendar-month path for users without a salary cycle.
-        current_key = (analysis_date.year, analysis_date.month)
-        monthly_net: dict[tuple[int, int], float] = defaultdict(float)
-        for tx in transactions:
-            if _is_fixed(tx, fixed_cat_id):
-                continue
-            key = (tx.date.year, tx.date.month)
-            delta = tx.amount if tx.type == "income" else -tx.amount
-            monthly_net[key] += delta
-        historical = sum(v for k, v in monthly_net.items() if k < current_key)
+        # No pool information at all — return 0 rather than a misleading number.
+        return 0.0
 
-    current_projected = predict_end_of_month_balance(
+    # ── Projected end-of-cycle surplus going to the pool ─────────────────────
+    # The variable-budget surplus (remaining allowance after projected spending)
+    # is transferred to the savings pool at cycle end. Add it to current balance.
+    projected_surplus = max(0.0, predict_end_of_month_balance(
         transactions, analysis_date, profile.expected_salary, salary_cycle
-    )
-    return round(historical + current_projected, 2)
+    ))
+    return round(current_balance + projected_surplus, 2)
 
 
 # ── Internal algorithms ───────────────────────────────────────────────────────
