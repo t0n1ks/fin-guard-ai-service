@@ -12,6 +12,11 @@ class AnalyzeBehaviorResponse(BaseModel):
     smart_nudge: str
     spending_tier: str
     risk_flags: list[str]
+    # Locally-learned, per-user calibrated daily variable spend (EWMA) and how
+    # many observations have folded into it. Additive/optional — defaults keep
+    # older clients unaffected.
+    calibrated_daily_spend: float = 0.0
+    learner_observations: int = 0
 
 
 class NextActionResponse(BaseModel):

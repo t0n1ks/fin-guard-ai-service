@@ -75,11 +75,13 @@ def health():
 logger.info("[4/6] Importing routers (sklearn + services)…")
 
 from app.api.v1.endpoints.analyze import router as analyze_router
+from app.api.v1.endpoints.learn import router as learn_router
 from app.api.v1.endpoints.tamagotchi import router as tamagotchi_router
 
 logger.info("[5/6] Routers imported")
 
 app.include_router(analyze_router, prefix="/v1")
+app.include_router(learn_router, prefix="/v1")
 app.include_router(tamagotchi_router, prefix="/v1")
 
 logger.info("[6/6] Startup complete — uvicorn binding on port %s", settings.port)

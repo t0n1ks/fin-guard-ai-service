@@ -74,7 +74,9 @@ PROJECT_CONTEXT.md
 INTEGRATION_GUIDE.md
 
 # ─── Brain service runtime state ────────────────────────────────────────────
-app/data/state/daily_state.json
+# Per-user runtime state (daily content, visit streaks, learner EWMA profiles).
+# Never commit — contains user-specific data and is regenerated at runtime.
+app/data/state/*.json
 
 # ─── Logs & Temp ─────────────────────────────────────────────────────────────
 *.log

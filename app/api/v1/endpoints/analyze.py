@@ -8,6 +8,7 @@ from app.models.response import AnalyzeBehaviorResponse
 from app.services import (
     forecaster,
     health_scorer,
+    learner,
     mood_engine,
     nudge_generator,
     sustainability_scorer,
@@ -58,6 +59,11 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
     store_pending_advice(user_id=profile.user_id, advice=nudge)
     record_visit(user_id=profile.user_id)
 
+    # Surface the per-user locally-learned profile (O(1) read, isolated by
+    # user_id). Training happens via the streamed /v1/learn observations from the
+    # Go backend; this only reads, so analyze stays side-effect-light.
+    lp = learner.get_profile(profile.user_id)
+
     return AnalyzeBehaviorResponse(
         financial_health_score=health_score,
         sustainability_score=sustainability,
@@ -67,4 +73,6 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
         smart_nudge=nudge,
         spending_tier=tier,
         risk_flags=risk_flags,
+        calibrated_daily_spend=lp["ewma_daily_spend"] if lp else 0.0,
+        learner_observations=lp["observations"] if lp else 0,
     )
