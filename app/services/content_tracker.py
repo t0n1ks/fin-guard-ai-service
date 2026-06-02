@@ -122,6 +122,16 @@ def _save_state(state: dict) -> None:
 
 # ─── State helpers ────────────────────────────────────────────────────────────
 
+def _reset_category(u: dict, queue_key: str, seen_key: str, pool: dict[str, list[str]], language: str) -> None:
+    """Cycle reset: refill a category's queue from the full pool (reshuffled) and
+    clear its seen-list. Called when the unseen queue is exhausted so the user
+    starts a fresh non-repeating cycle through the whole pool."""
+    items = list(pool.get(language, pool.get("EN", [])))
+    random.shuffle(items)
+    u[queue_key] = items
+    u[seen_key] = []
+
+
 def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> None:
     key = str(user_id)
     existing = state.get(key, {})
@@ -138,6 +148,8 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
             existing["seen_budget_tips"] = []
         if "seen_stats" not in existing:
             existing["seen_stats"] = []
+        if "seen_advice" not in existing:
+            existing["seen_advice"] = []
         state[key] = existing
         return
 
@@ -185,11 +197,13 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
     random.shuffle(unseen_budget_tips)
     random.shuffle(unseen_stats)
 
-    # Encouragement no-repeat: reset cross-language but preserve cross-day
+    # Encouragement + advice no-repeat: reset cross-language but preserve cross-day
     if same_lang:
         seen_encouragements: list = existing.get("seen_encouragements", [])
+        seen_advice: list = existing.get("seen_advice", [])
     else:
         seen_encouragements = []
+        seen_advice = []
 
     all_encouragements = list(ENCOURAGEMENTS.get(language, ENCOURAGEMENTS["EN"]))
     unseen_encouragements = [e for e in all_encouragements if e not in seen_encouragements]
@@ -215,6 +229,9 @@ def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> 
         "seen_stats": seen_stats,
         "encouragement_queue": unseen_encouragements,
         "seen_encouragements": seen_encouragements,
+        # Persistent advice de-dup — carried across days (same language) so the
+        # same nudge is never repeated, while the frontend list still resets daily.
+        "seen_advice": seen_advice,
         # Preserve pending advice only when it was generated in the same language today
         "pending_advice": existing.get("pending_advice", "") if (same_day and same_lang) else "",
         "advice_consumed": existing.get("advice_consumed", True) if (same_day and same_lang) else True,
@@ -240,15 +257,24 @@ def _build_translations(text: str, source: dict[str, list[str]], language: str) 
     return translations
 
 
-def get_next_joke(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
+def get_next_joke(
+    user_id: int, language: str, enforce_daily_cap: bool = True
+) -> tuple[str | None, dict[str, str]]:
+    """Return the next unseen joke. enforce_daily_cap is True for the proactive
+    channel (pacing); explicit Cow clicks pass False so every click yields a
+    fresh unseen joke, cycling through the whole pool before any repeat."""
     with _lock:
         state = _load_state()
         today = date_type.today().isoformat()
         _ensure_user_state(state, user_id, language, today)
         u = state[str(user_id)]
 
-        if u["jokes_served"] >= 3 or not u["joke_queue"]:
+        if enforce_daily_cap and u["jokes_served"] >= 3:
             return None, {}
+        if not u["joke_queue"]:
+            _reset_category(u, "joke_queue", "seen_jokes", JOKES, language)
+        if not u["joke_queue"]:
+            return None, {}  # pool genuinely empty for this language
 
         joke = u["joke_queue"].pop(0)
         u["jokes_served"] += 1
@@ -259,15 +285,22 @@ def get_next_joke(user_id: int, language: str) -> tuple[str | None, dict[str, st
         return _cap(joke), _build_translations(joke, JOKES, language)
 
 
-def get_next_fact(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
+def get_next_fact(
+    user_id: int, language: str, enforce_daily_cap: bool = True
+) -> tuple[str | None, dict[str, str]]:
+    """Return the next unseen fact. See get_next_joke for the cap semantics."""
     with _lock:
         state = _load_state()
         today = date_type.today().isoformat()
         _ensure_user_state(state, user_id, language, today)
         u = state[str(user_id)]
 
-        if u["facts_served"] >= 5 or not u["fact_queue"]:
+        if enforce_daily_cap and u["facts_served"] >= 5:
             return None, {}
+        if not u["fact_queue"]:
+            _reset_category(u, "fact_queue", "seen_facts", FACTS, language)
+        if not u["fact_queue"]:
+            return None, {}  # pool genuinely empty for this language
 
         fact = u["fact_queue"].pop(0)
         u["facts_served"] += 1
@@ -314,6 +347,19 @@ def get_pending_advice(user_id: int) -> str | None:
 
         advice = u["pending_advice"]
         u["advice_consumed"] = True
+
+        # Persistent de-dup: never serve the same advice text twice (across days).
+        # Nudges vary with the user's situation, so this won't starve — a duplicate
+        # simply yields None and the frontend falls back to its local pacing pool.
+        seen_adv: list = u.setdefault("seen_advice", [])
+        if advice in seen_adv:
+            state[key] = u
+            _save_state(state)
+            return None
+        seen_adv.append(advice)
+        if len(seen_adv) > 100:
+            del seen_adv[:-100]  # bound growth — keep the most recent 100
+
         state[key] = u
         _save_state(state)
         return advice
@@ -340,6 +386,7 @@ def store_pending_advice(user_id: int, advice: str) -> None:
                 "facts_served": 0,
                 "seen_jokes": existing.get("seen_jokes", []),
                 "seen_facts": existing.get("seen_facts", []),
+                "seen_advice": existing.get("seen_advice", []),
                 "pending_advice": advice,
                 "advice_consumed": False,
                 "greeting_served": False,

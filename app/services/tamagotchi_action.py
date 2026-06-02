@@ -60,7 +60,57 @@ def _build_response(
     )
 
 
-def get_next_action(user_id: int, language: str) -> NextActionResponse:
+# Budget-health → joke probability. Drives context-aware proactive content:
+# over budget keeps it serious (no jokes, lean on facts/tips); comfortably under
+# allows lighter humor. Absent/unknown context falls back to the original 0.3.
+_JOKE_PROB_BY_CONTEXT = {"over": 0.0, "warn": 0.15, "good": 0.45}
+
+
+def get_categorized_content(
+    user_id: int,
+    language: str,
+    category: str,
+    context: str | None = None,
+) -> NextActionResponse:
+    """Return a single content item of an explicit, fixed category.
+
+    Used by the user-initiated UFO entities (Cow → joke, Star → fact) and the
+    transaction-triggered advice path. Strictly category-locked: unlike
+    get_next_action it never falls through to a different type. When the pool is
+    exhausted/capped (or no advice is pending) it returns type="NONE" so the
+    caller can fall back to its local i18n pool. `context` is accepted for
+    parity/logging; the category is never overridden by it.
+    """
+    cat = (category or "").strip().lower()
+
+    if cat == "advice":
+        advice = get_pending_advice(user_id)
+        if advice:
+            return _build_response("ADVICE", advice, "COIN_COLLECT", language, user_id=user_id)
+        return NextActionResponse(type="NONE", content=None, animation_hint="FLY_BY_MOON")
+
+    # Note: user_id is deliberately NOT passed to _build_response for joke/fact.
+    # That keeps the categories strict — a joke is only ever a real joke (or NONE);
+    # the <5-char encouragement substitution in _build_response can never leak
+    # advice/encouragement content into the humor (Cow) or fact (Star) channels.
+    # Explicit user clicks bypass the daily pacing cap so every Cow/Star tap
+    # returns a fresh unseen item, cycling the whole pool before any repeat.
+    if cat == "joke":
+        content, translations = get_next_joke(user_id, language, enforce_daily_cap=False)
+        if content is not None:
+            return _build_response("JOKE", content, "COW_ABDUCTION", language, translations)
+        return NextActionResponse(type="NONE", content=None, animation_hint="COW_ABDUCTION")
+
+    if cat == "fact":
+        content, translations = get_next_fact(user_id, language, enforce_daily_cap=False)
+        if content is not None:
+            return _build_response("FACT", content, "COIN_COLLECT", language, translations)
+        return NextActionResponse(type="NONE", content=None, animation_hint="COIN_COLLECT")
+
+    return NextActionResponse(type="NONE", content=None, animation_hint="FLY_BY_MOON")
+
+
+def get_next_action(user_id: int, language: str, context: str | None = None) -> NextActionResponse:
     advice = get_pending_advice(user_id)
     if advice is not None:
         return _build_response("ADVICE", advice, "COIN_COLLECT", language, user_id=user_id)
@@ -82,8 +132,9 @@ def get_next_action(user_id: int, language: str) -> NextActionResponse:
         mark_greeting_served(user_id)
         return _build_response("GREETING", greeting, "FLY_BY_MOON", language, user_id=user_id)
 
-    # 30% jokes / 70% facts — probabilistic ordering, fall through if one pool exhausted
-    if random.random() < 0.3:
+    # Context-aware jokes/facts ordering — probabilistic, fall through if one pool exhausted
+    joke_prob = _JOKE_PROB_BY_CONTEXT.get((context or "").strip().lower(), 0.3)
+    if random.random() < joke_prob:
         first_fn, first_type, first_hint = get_next_joke, "JOKE", "COW_ABDUCTION"
         second_fn, second_type, second_hint = get_next_fact, "FACT", "COIN_COLLECT"
     else:
