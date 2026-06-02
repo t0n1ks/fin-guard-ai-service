@@ -9,13 +9,6 @@ from app.models.request import TransactionItem, UserProfile, SalaryCycleInfo
 
 _SAVINGS_THRESHOLD = 5.0  # EUR — minimum category spend before suggesting a savings tip
 
-_SAVINGS_BONUS_LABEL: dict[str, str] = {
-    "EN": "savings bonus",
-    "RU": "бонус экономии",
-    "UA": "бонус економії",
-    "DE": "Sparbonus",
-}
-
 
 def _fmt(value: float) -> str:
     """Format to at most 2 decimal places, stripping trailing zeros."""
@@ -53,7 +46,6 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         ],
         "pacing_good": [
             "On track! Trim {top_cat} 15% → ~{potential_saving} {currency} saved.",
-            "{days_left}d left, {reserve_display} {currency} to spare. 👌",
         ],
         "predicted_shortfall": [
             "Shortfall ahead: {predicted_balance} {currency}. Cut now! 🔴",
@@ -95,7 +87,6 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         ],
         "pacing_good": [
             "На курсе! Сократи {top_cat} 15% → ~{potential_saving} {currency}.",
-            "Осталось {days_left}д, {reserve_display} {currency} в запасе. 👌",
         ],
         "predicted_shortfall": [
             "Дефицит! Конец месяца: {predicted_balance} {currency}. 🔴",
@@ -137,7 +128,6 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         ],
         "pacing_good": [
             "На курсі! Скороти {top_cat} 15% → ~{potential_saving} {currency}.",
-            "Лишилось {days_left}д, {reserve_display} {currency} в запасі. 👌",
         ],
         "predicted_shortfall": [
             "Дефіцит! Кінець місяця: {predicted_balance} {currency}. 🔴",
@@ -179,7 +169,6 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         ],
         "pacing_good": [
             "Auf Kurs! {top_cat} 15% kürzen → ~{potential_saving} {currency}.",
-            "{days_left}T übrig, {reserve_display} {currency} Reserve. 👌",
         ],
         "predicted_shortfall": [
             "Defizit! Monatsende: {predicted_balance} {currency}. 🔴",
@@ -280,41 +269,6 @@ _DAY_NAMES: dict[str, list[str]] = {
 }
 
 
-def _compute_payday_cycle(
-    profile: UserProfile,
-    transactions: list[TransactionItem],
-    today: date,
-) -> tuple[date, date | None]:
-    """Returns (last_payday, next_payday). next_payday is None if no cycle is set."""
-    if profile.payday_mode == "fixed" and profile.fixed_payday > 0:
-        fd = profile.fixed_payday
-        y, m, d = today.year, today.month, today.day
-        if d >= fd:
-            last = date(y, m, fd)
-            next_m, next_y = (m + 1, y) if m < 12 else (1, y + 1)
-            next_ = date(next_y, next_m, fd)
-        else:
-            last_m, last_y = (m - 1, y) if m > 1 else (12, y - 1)
-            last = date(last_y, last_m, fd)
-            next_ = date(y, m, fd)
-        return last, next_
-
-    # smart mode — derive from most recent one-time income
-    income_dates = sorted(
-        (tx.date for tx in transactions if tx.type == "income" and tx.income_type == "one_time"),
-        reverse=True,
-    )
-    last = income_dates[0] if income_dates else date(today.year, today.month, 1)
-
-    next_: date | None = None
-    if profile.manual_next_payday:
-        try:
-            next_ = date.fromisoformat(profile.manual_next_payday)
-        except ValueError:
-            pass
-    return last, next_
-
-
 def _build_context(
     transactions: list[TransactionItem],
     profile: UserProfile,
@@ -334,33 +288,9 @@ def _build_context(
     )
     effective_income = month_income if month_income > 0 else profile.expected_salary
 
-    # static baseline (always needed for pace and savings_bonus comparison)
+    # static baseline (drives pace / pct_used)
     weekly_limit = profile.monthly_spending_goal / 4.3 if profile.monthly_spending_goal > 0 else 0.0
     pace = week_spending / weekly_limit if weekly_limit > 0 else 0.0
-
-    # payday-aware weekly allowance — mirrors WeeklyBudgetCard formula
-    last_payday, next_payday = _compute_payday_cycle(profile, transactions, analysis_date)
-    if next_payday is not None and profile.monthly_spending_goal > 0:
-        spent_since_payday = sum(
-            tx.amount for tx in transactions
-            if tx.type == "expense" and tx.date >= last_payday
-        )
-        days_remaining = max(1, (next_payday - analysis_date).days)
-        payday_weekly_allowance = max(
-            0.0,
-            (profile.monthly_spending_goal - spent_since_payday) / (days_remaining / 7),
-        )
-    else:
-        payday_weekly_allowance = weekly_limit
-
-    budget_remaining = round(max(0.0, payday_weekly_allowance - week_spending), 2)
-    savings_bonus = round(max(0.0, payday_weekly_allowance - weekly_limit), 2)
-    lang_key = profile.language.upper()
-    bonus_label = _SAVINGS_BONUS_LABEL.get(lang_key, _SAVINGS_BONUS_LABEL["EN"])
-    if savings_bonus > 0.01:
-        reserve_display = f"{_fmt(budget_remaining)} + {_fmt(savings_bonus)} ({bonus_label})"
-    else:
-        reserve_display = f"{_fmt(budget_remaining)}"
 
     cat_map: dict[str, float] = defaultdict(float)
     for tx in week_expenses:
@@ -395,9 +325,6 @@ def _build_context(
         "currency": profile.currency,
         "potential_saving": _fmt(potential_saving),
         "saving_viable": saving_viable,
-        "budget_remaining": budget_remaining,
-        "savings_bonus": savings_bonus,
-        "reserve_display": reserve_display,
         "predicted_balance": _fmt(predicted_balance),
         "day_name": day_name,
     }
