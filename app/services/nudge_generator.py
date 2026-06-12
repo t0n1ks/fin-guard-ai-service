@@ -29,8 +29,8 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
             "{top_cat} blew your week by {pct_over}%. 🕳️",
         ],
         "pacing_warn": [
-            "{pct_used}% used, {days_left}d left. Slow it down! 🐢",
-            "Heads up: {pct_used}% of week spent, {days_left} days to go.",
+            "{pct_used}% used this week. Slow it down! 🐢",
+            "Heads up: {pct_used}% of your weekly budget spent.",
         ],
         "pacing_great": [
             "Houston, only {pct_used}% used on {day_name}. 🚀",
@@ -70,8 +70,8 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
             "{top_cat} сжёг бюджет на {pct_over}% сверх нормы. 🕳️",
         ],
         "pacing_warn": [
-            "{pct_used}% бюджета, {days_left}д осталось. Тише! 🐢",
-            "Внимание: {pct_used}% недели потрачено, {days_left}д впереди.",
+            "{pct_used}% бюджета потрачено. Тише! 🐢",
+            "Внимание: {pct_used}% недели потрачено.",
         ],
         "pacing_great": [
             "Хьюстон, только {pct_used}% бюджета. 🚀",
@@ -111,8 +111,8 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
             "{top_cat} спалив бюджет на {pct_over}% понад норму. 🕳️",
         ],
         "pacing_warn": [
-            "{pct_used}% бюджету, {days_left}д лишилось. Стоп! 🐢",
-            "Увага: {pct_used}% тижня, {days_left}д попереду.",
+            "{pct_used}% бюджету витрачено. Стоп! 🐢",
+            "Увага: {pct_used}% тижня витрачено.",
         ],
         "pacing_great": [
             "Хьюстон, лише {pct_used}% бюджету. 🚀",
@@ -152,8 +152,8 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
             "{top_cat} fraß Budget um {pct_over}%. 🕳️",
         ],
         "pacing_warn": [
-            "{pct_used}% verbraucht, {days_left}T übrig. Bremse! 🐢",
-            "Achtung: {pct_used}% der Woche, {days_left} Tage noch.",
+            "{pct_used}% verbraucht. Bremse! 🐢",
+            "Achtung: {pct_used}% der Woche verbraucht.",
         ],
         "pacing_great": [
             "Houston, nur {pct_used}% am {day_name}. 🚀",
@@ -304,7 +304,6 @@ def _build_context(
     raw_top = max(cat_map, key=lambda k: cat_map[k]) if cat_map else _fallback
     top_cat = raw_top[:16] if len(raw_top) > 16 else raw_top
 
-    days_left = 7 - analysis_date.isoweekday()
     pct_used = int(round(pace * 100))
     pct_over = max(0, pct_used - 100)
     top_cat_spend = sum(tx.amount for tx in week_expenses if tx.category.name == top_cat)
@@ -318,7 +317,6 @@ def _build_context(
     return {
         "pct_over": pct_over,
         "pct_used": pct_used,
-        "days_left": days_left,
         "top_cat": top_cat,
         "effective_income": _fmt(effective_income),
         "goal": _fmt(profile.monthly_spending_goal),
