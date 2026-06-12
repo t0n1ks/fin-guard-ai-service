@@ -288,7 +288,17 @@ def _build_context(
     )
     effective_income = month_income if month_income > 0 else profile.expected_salary
 
-    # static baseline (drives pace / pct_used)
+    # Weekly baseline driving pace / pct_used. This INTENTIONALLY mirrors
+    # tier_calculator.compute_spending_tier so the percentage shown in a nudge
+    # never contradicts the tier that triggered it — both derive from the same
+    # monthly_spending_goal / 4.3 figure.
+    #
+    # Note: the Dashboard "Weekly Budget" widget shows a different number — the
+    # backend's server-authoritative rolling allowance (current_week_spent /
+    # current_week_allowance from computeCycleStats). That value is NOT part of
+    # the analyze-behavior payload (only var_needs/var_wants budgets + cycle
+    # dates are sent), so this service cannot read the widget's exact source.
+    # Keeping this baseline avoids fabricating a second, divergent percentage.
     weekly_limit = profile.monthly_spending_goal / 4.3 if profile.monthly_spending_goal > 0 else 0.0
     pace = week_spending / weekly_limit if weekly_limit > 0 else 0.0
 
