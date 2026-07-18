@@ -155,6 +155,23 @@ Returns the next action the Tamagotchi UFO should perform.
 
 ---
 
+### `GET /v1/tamagotchi/content?user_id=42&category=joke&language=EN`
+
+Category-locked content for **user-initiated** UFO entities (e.g. tapping the Cow requests a `joke`, the Star requests a `fact`) — distinct from the automatic `next-action` scheduler. `category` is one of `joke`, `fact`, `advice`.
+
+**Auth:** `X-Brain-API-Key` header required.
+
+**Response:** same shape as `next-action`; serves `{ "type": "NONE", "content": null }` when the requested category has no eligible content left for the day.
+```json
+{
+  "type": "JOKE",
+  "content": "I told my wallet a joke. It didn't laugh — it was a little short.",
+  "animation_hint": "COW_ABDUCTION"
+}
+```
+
+---
+
 ### `POST /v1/tamagotchi/feedback`
 
 Records whether the user accepted or dismissed the last message.
@@ -269,7 +286,8 @@ The Go backend (`go-react-angular-expense-tracker`) calls this service via three
 | Go route | Proxied to | Purpose |
 |---|---|---|
 | `POST /api/ai/analyze` | `POST /v1/analyze-behavior` | Full spending analysis |
-| `GET /api/ai/next-action` | `GET /v1/tamagotchi/next-action` | Next UFO action |
+| `GET /api/ai/next-action` | `GET /v1/tamagotchi/next-action` | Next UFO action (automatic scheduler) |
+| `GET /api/ai/content` | `GET /v1/tamagotchi/content` | Category-locked content for user-triggered UFO entities |
 | `POST /api/ai/feedback` | `POST /v1/tamagotchi/feedback` | Accept / reject signal |
 
 The Go backend gracefully degrades — all three endpoints return a safe empty response when this service is unreachable, so the UFO simply stays silent rather than crashing the frontend.
