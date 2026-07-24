@@ -350,4 +350,6 @@ fin-guard-ai-service/
 
 ## License
 
-MIT
+**All rights reserved.** Copyright (c) 2026 Mykyta Titov (t0n1ks).
+
+This project is **source-available for demonstration, portfolio, and review purposes only — it is not open source.** No permission is granted to use, copy, modify, distribute, sublicense, or sell any part of it without prior written permission from the author. See [LICENSE](LICENSE).
