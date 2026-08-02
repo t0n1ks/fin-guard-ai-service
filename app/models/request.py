@@ -65,6 +65,19 @@ class SalaryCycleInfo(BaseModel):
     cycle_start_at: Optional[str] = None  # ISO timestamp string
     next_payday_at: Optional[str] = None  # ISO timestamp string; cycle end
 
+    # ── Authoritative weekly-pace window (Go computeCycleStats) ───────────────
+    # These are the EXACT numbers the Dashboard budget bar renders. The pace
+    # advisor consumes them verbatim and never re-derives weekly math, so the
+    # UFO's verdict can never contradict the bar. Defaults keep older Go builds
+    # (which don't send these) validating and falling back to the legacy path.
+    weekly_allowance: float = 0.0        # "Можно потратить" for the current week
+    spent_this_week: float = 0.0         # variable spend inside the 7-day window
+    days_elapsed_in_week: int = 0        # 0..7 days into the current cycle-week
+    days_remaining_in_week: int = 0      # days left in the current cycle-week
+    days_until_next_payout: int = 0      # days left in the whole cycle
+    cycle_active: bool = False           # cycle exists and today is within it
+    is_lite: bool = False                # user opted into Lite mode
+
 
 class AnalyzeBehaviorRequest(BaseModel):
     user_profile: UserProfile

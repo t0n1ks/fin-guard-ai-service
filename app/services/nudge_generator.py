@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from app.models.request import TransactionItem, UserProfile, SalaryCycleInfo
+from app.services import pace_advisor
 
 _SAVINGS_THRESHOLD = 5.0  # EUR — minimum category spend before suggesting a savings tip
 
@@ -23,6 +24,10 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         "pacing_good_start": [
             "Great start! No significant expenses yet. 🌱",
             "Clean week so far — keep it up! ✨",
+        ],
+        "pacing_fresh": [
+            "Fresh week, clean slate. Let's pace it nicely. 🌱",
+            "New week just began — plenty of room to work with. ✨",
         ],
         "pacing_over": [
             "⚠️ {pct_over}% over budget! Cut {top_cat} now.",
@@ -65,6 +70,10 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
             "Отличное начало! Расходов почти нет. 🌱",
             "Чистая неделя! Продолжай в том же духе! ✨",
         ],
+        "pacing_fresh": [
+            "Новая неделя, чистый лист. Держим ровный темп. 🌱",
+            "Неделя только началась — простора хватает. ✨",
+        ],
         "pacing_over": [
             "⚠️ Перерасход {pct_over}%! Урежьте {top_cat}.",
             "{top_cat} сжёг бюджет на {pct_over}% сверх нормы. 🕳️",
@@ -106,6 +115,10 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
             "Чудовий старт! Витрат майже немає. 🌱",
             "Чистий тиждень — так тримати! ✨",
         ],
+        "pacing_fresh": [
+            "Новий тиждень, чистий аркуш. Тримаємо рівний темп. 🌱",
+            "Тиждень щойно почався — простору вдосталь. ✨",
+        ],
         "pacing_over": [
             "⚠️ Перевитрат {pct_over}%! Скоротіть {top_cat}.",
             "{top_cat} спалив бюджет на {pct_over}% понад норму. 🕳️",
@@ -146,6 +159,10 @@ _TEMPLATES: dict[str, dict[str, list[str]]] = {
         "pacing_good_start": [
             "Guter Start! Kaum Ausgaben bisher. 🌱",
             "Saubere Woche — weiter so! ✨",
+        ],
+        "pacing_fresh": [
+            "Frische Woche, weißes Blatt. Halten wir ein ruhiges Tempo. 🌱",
+            "Neue Woche gestartet — genug Spielraum. ✨",
         ],
         "pacing_over": [
             "⚠️ {pct_over}% über Budget! Kürze {top_cat}.",
@@ -275,6 +292,7 @@ def _build_context(
     analysis_date: date,
     predicted_balance: float,
     user_categories: list[str] | None = None,
+    salary_cycle: SalaryCycleInfo | None = None,
 ) -> dict[str, Any]:
     monday = analysis_date - timedelta(days=analysis_date.isoweekday() - 1)
     week_expenses = [tx for tx in transactions if tx.type == "expense" and tx.date >= monday]
@@ -288,19 +306,26 @@ def _build_context(
     )
     effective_income = month_income if month_income > 0 else profile.expected_salary
 
-    # Weekly baseline driving pace / pct_used. This INTENTIONALLY mirrors
-    # tier_calculator.compute_spending_tier so the percentage shown in a nudge
-    # never contradicts the tier that triggered it — both derive from the same
-    # monthly_spending_goal / 4.3 figure.
-    #
-    # Note: the Dashboard "Weekly Budget" widget shows a different number — the
-    # backend's server-authoritative rolling allowance (current_week_spent /
-    # current_week_allowance from computeCycleStats). That value is NOT part of
-    # the analyze-behavior payload (only var_needs/var_wants budgets + cycle
-    # dates are sent), so this service cannot read the widget's exact source.
-    # Keeping this baseline avoids fabricating a second, divergent percentage.
-    weekly_limit = profile.monthly_spending_goal / 4.3 if profile.monthly_spending_goal > 0 else 0.0
-    pace = week_spending / weekly_limit if weekly_limit > 0 else 0.0
+    # Weekly percentages driving pct_used / pct_over. For cycle users these come
+    # from the SAME authoritative weekly numbers the Dashboard budget bar renders
+    # (shipped by Go's computeCycleStats), so the nudge percentage can never
+    # contradict the bar — and pct_over is > 0 only when truly over the allowance.
+    # Only when there is no active cycle do we fall back to the legacy
+    # monthly_spending_goal / 4.3 baseline (kept for no-cycle users).
+    if salary_cycle is not None and salary_cycle.cycle_active and salary_cycle.weekly_allowance > 0:
+        verdict = pace_advisor.evaluate_pace(
+            weekly_allowance=salary_cycle.weekly_allowance,
+            spent_this_week=salary_cycle.spent_this_week,
+            days_elapsed_in_week=salary_cycle.days_elapsed_in_week,
+            days_remaining_in_week=salary_cycle.days_remaining_in_week,
+        )
+        pct_used = verdict.pct_used
+        pct_over = verdict.pct_over
+    else:
+        weekly_limit = profile.monthly_spending_goal / 4.3 if profile.monthly_spending_goal > 0 else 0.0
+        pace = week_spending / weekly_limit if weekly_limit > 0 else 0.0
+        pct_used = int(round(pace * 100))
+        pct_over = max(0, pct_used - 100)
 
     cat_map: dict[str, float] = defaultdict(float)
     for tx in week_expenses:
@@ -314,8 +339,6 @@ def _build_context(
     raw_top = max(cat_map, key=lambda k: cat_map[k]) if cat_map else _fallback
     top_cat = raw_top[:16] if len(raw_top) > 16 else raw_top
 
-    pct_used = int(round(pace * 100))
-    pct_over = max(0, pct_used - 100)
     top_cat_spend = sum(tx.amount for tx in week_expenses if tx.category.name == top_cat)
     potential_saving = round(top_cat_spend * 0.15, 2)
     saving_viable = top_cat_spend >= _SAVINGS_THRESHOLD and potential_saving > 0.0
@@ -349,7 +372,10 @@ def generate_nudge(
     predicted_savings_balance: float = 0.0,
     salary_cycle: SalaryCycleInfo | None = None,
 ) -> str:
-    ctx = _build_context(transactions, profile, analysis_date, predicted_balance, user_categories=user_categories)
+    ctx = _build_context(
+        transactions, profile, analysis_date, predicted_balance,
+        user_categories=user_categories, salary_cycle=salary_cycle,
+    )
     lang = profile.language.upper()
     lang_templates = _TEMPLATES.get(lang, _TEMPLATES["EN"])
 

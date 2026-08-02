@@ -48,7 +48,9 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
         transactions, today, profile, salary_cycle=body.salary_cycle
     )
     mood = mood_engine.get_tamagotchi_mood(health_score)
-    tier = tier_calculator.compute_spending_tier(transactions, profile, today)
+    tier = tier_calculator.compute_spending_tier(
+        transactions, profile, today, salary_cycle=body.salary_cycle
+    )
     nudge = nudge_generator.generate_nudge(
         tier, risk_flags, profile, transactions, today, predicted_balance,
         user_categories=body.user_categories,
