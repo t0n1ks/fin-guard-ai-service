@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from app.models.request import TransactionItem, UserProfile, SalaryCycleInfo
+from app.models.request import BudgetWindowInfo, TransactionItem, UserProfile, SalaryCycleInfo
 from app.services import pace_advisor
 
 _SAVINGS_THRESHOLD = 5.0  # EUR — minimum category spend before suggesting a savings tip
@@ -293,6 +293,7 @@ def _build_context(
     predicted_balance: float,
     user_categories: list[str] | None = None,
     salary_cycle: SalaryCycleInfo | None = None,
+    budget_window: BudgetWindowInfo | None = None,
 ) -> dict[str, Any]:
     monday = analysis_date - timedelta(days=analysis_date.isoweekday() - 1)
     week_expenses = [tx for tx in transactions if tx.type == "expense" and tx.date >= monday]
@@ -306,26 +307,15 @@ def _build_context(
     )
     effective_income = month_income if month_income > 0 else profile.expected_salary
 
-    # Weekly percentages driving pct_used / pct_over. For cycle users these come
-    # from the SAME authoritative weekly numbers the Dashboard budget bar renders
-    # (shipped by Go's computeCycleStats), so the nudge percentage can never
-    # contradict the bar — and pct_over is > 0 only when truly over the allowance.
-    # Only when there is no active cycle do we fall back to the legacy
-    # monthly_spending_goal / 4.3 baseline (kept for no-cycle users).
-    if salary_cycle is not None and salary_cycle.cycle_active and salary_cycle.weekly_allowance > 0:
-        verdict = pace_advisor.evaluate_pace(
-            weekly_allowance=salary_cycle.weekly_allowance,
-            spent_this_week=salary_cycle.spent_this_week,
-            days_elapsed_in_week=salary_cycle.days_elapsed_in_week,
-            days_remaining_in_week=salary_cycle.days_remaining_in_week,
-        )
-        pct_used = verdict.pct_used
-        pct_over = verdict.pct_over
-    else:
-        weekly_limit = profile.monthly_spending_goal / 4.3 if profile.monthly_spending_goal > 0 else 0.0
-        pace = week_spending / weekly_limit if weekly_limit > 0 else 0.0
-        pct_used = int(round(pace * 100))
-        pct_over = max(0, pct_used - 100)
+    # Weekly percentages driving pct_used / pct_over. They come from the SAME
+    # authoritative weekly numbers the Dashboard budget bar renders — Go's
+    # computeCycleStats for cycle users, computeBudgetWindow for no-cycle
+    # monthly-goal users — so the nudge percentage can never contradict the bar,
+    # and pct_over is > 0 only when truly over the allowance. With no valid weekly
+    # window at all both stay 0: no baseless percentage is ever shown.
+    verdict = pace_advisor.resolve_pace(salary_cycle, budget_window)
+    pct_used = verdict.pct_used
+    pct_over = verdict.pct_over
 
     cat_map: dict[str, float] = defaultdict(float)
     for tx in week_expenses:
@@ -371,10 +361,12 @@ def generate_nudge(
     user_categories: list[str] | None = None,
     predicted_savings_balance: float = 0.0,
     salary_cycle: SalaryCycleInfo | None = None,
+    budget_window: BudgetWindowInfo | None = None,
 ) -> str:
     ctx = _build_context(
         transactions, profile, analysis_date, predicted_balance,
         user_categories=user_categories, salary_cycle=salary_cycle,
+        budget_window=budget_window,
     )
     lang = profile.language.upper()
     lang_templates = _TEMPLATES.get(lang, _TEMPLATES["EN"])

@@ -79,9 +79,31 @@ class SalaryCycleInfo(BaseModel):
     is_lite: bool = False                # user opted into Lite mode
 
 
+class BudgetWindowInfo(BaseModel):
+    """Optional — present for users WITHOUT an active salary cycle.
+
+    The authoritative monthly budget window computed by Go (computeBudgetWindow):
+    the exact numbers the Dashboard budget bar renders. The weekly fields are named
+    identically to SalaryCycleInfo's so pace_advisor.resolve_pace can consume either
+    source through one code path. Defaults keep older Go builds (which don't send
+    this block) validating — they simply get no pace verdict instead of a verdict
+    invented from monthly_spending_goal / 4.3.
+    """
+    has_goal: bool = False
+    monthly_budget: float = 0.0
+    spent_this_window: float = 0.0
+
+    weekly_allowance: float = 0.0          # "Можно потратить" for the current week
+    spent_this_week: float = 0.0           # expenses inside the current week window
+    days_elapsed_in_week: int = 0          # 0..7 COMPLETED days into the week
+    days_remaining_in_week: int = 0        # days left in the week, capped by the month
+    days_remaining_in_window: int = 0      # days left in the calendar month
+
+
 class AnalyzeBehaviorRequest(BaseModel):
     user_profile: UserProfile
     transactions: list[TransactionItem]
     analysis_date: date
     user_categories: list[str] = Field(default_factory=list)
     salary_cycle: Optional[SalaryCycleInfo] = None
+    budget_window: Optional[BudgetWindowInfo] = None

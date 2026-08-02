@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Optional
 
 # ── Pace-aware weekly guru ────────────────────────────────────────────────────
 #
 # Single deterministic function that turns the AUTHORITATIVE weekly-budget
-# numbers (produced by Go's computeCycleStats and shipped verbatim in the
+# numbers (produced by Go's computeCycleStats for cycle users and
+# computeBudgetWindow for monthly-goal users, shipped verbatim in the
 # analyze-behavior payload) into a pace verdict. It never re-derives budget math
 # from monthly_spending_goal / 4.3 — that historic shortcut is exactly what made
 # the UFO claim "133% over" while the budget bar showed plenty of room left.
@@ -87,3 +89,41 @@ def evaluate_pace(
 
     # On or comfortably under an even pace.
     return PaceVerdict(TIER_GOOD, pct_used, pct_over)
+
+
+def resolve_pace(
+    salary_cycle: Optional[Any] = None,
+    budget_window: Optional[Any] = None,
+) -> PaceVerdict:
+    """Pick the one authoritative weekly window for THIS user and evaluate it.
+
+    Cycle users are served by ``salary_cycle`` (Go's computeCycleStats); no-cycle
+    monthly-goal users by ``budget_window`` (Go's computeBudgetWindow). Both carry
+    the identical weekly field names, so a single call site covers both user types
+    — there is no second verdict path and no goal / 4.3 fallback anywhere.
+
+    Returns a TIER_NONE verdict (with zeroed percentages) when neither source has
+    a valid weekly allowance, so callers degrade to percentage-free copy rather
+    than inventing a baseless number.
+    """
+    if (
+        salary_cycle is not None
+        and salary_cycle.cycle_active
+        and salary_cycle.weekly_allowance > 0
+    ):
+        source = salary_cycle
+    elif (
+        budget_window is not None
+        and budget_window.has_goal
+        and budget_window.weekly_allowance > 0
+    ):
+        source = budget_window
+    else:
+        return PaceVerdict(TIER_NONE, 0, 0)
+
+    return evaluate_pace(
+        weekly_allowance=source.weekly_allowance,
+        spent_this_week=source.spent_this_week,
+        days_elapsed_in_week=source.days_elapsed_in_week,
+        days_remaining_in_week=source.days_remaining_in_week,
+    )

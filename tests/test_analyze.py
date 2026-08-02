@@ -6,7 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models.request import AnalyzeBehaviorRequest, CategoryInfo, TransactionItem, UserProfile
+from app.models.request import (
+    AnalyzeBehaviorRequest,
+    BudgetWindowInfo,
+    CategoryInfo,
+    TransactionItem,
+    UserProfile,
+)
 from app.services import (
     forecaster,
     health_scorer,
@@ -384,20 +390,48 @@ def test_tier_salary_just_in():
     assert tier_calculator.compute_spending_tier(txs, profile, TODAY) == "salary_just_in"
 
 
+def _window(**kwargs) -> BudgetWindowInfo:
+    """Authoritative monthly budget window for a no-cycle user (Go's
+    computeBudgetWindow). TODAY is a Tuesday, so the week has 1 completed day."""
+    defaults = dict(
+        has_goal=True,
+        monthly_budget=2000.0,
+        weekly_allowance=WEEKLY_ALLOWANCE,
+        spent_this_week=0.0,
+        days_elapsed_in_week=1,
+        days_remaining_in_week=6,
+        days_remaining_in_window=27,
+    )
+    defaults.update(kwargs)
+    return BudgetWindowInfo(**defaults)
+
+
+# The authoritative weekly allowance Go now ships for no-cycle users. Numerically
+# close to the retired 2000/4.3 shortcut so these scenarios stay comparable, but
+# it is a server-computed figure, not a client-side guess.
+WEEKLY_ALLOWANCE = 465.12
+
+
 def test_tier_pacing_over():
-    # weekly_limit = 2000 / 4.3 ≈ 465; spend 600 → pace ≈ 1.29
+    # Spent MORE than the authoritative weekly allowance → honest "over".
     monday = TODAY - timedelta(days=TODAY.isoweekday() - 1)
     txs = [_tx(amount=600, tx_date=monday)]
     profile = _profile()
-    assert tier_calculator.compute_spending_tier(txs, profile, TODAY) == "pacing_over"
+    tier = tier_calculator.compute_spending_tier(
+        txs, profile, TODAY, budget_window=_window(spent_this_week=600.0)
+    )
+    assert tier == "pacing_over"
 
 
 def test_tier_pacing_warn():
-    # spend 400 → pace ≈ 0.86
+    # Under the allowance but far ahead of an even daily burn → gentle warn.
     monday = TODAY - timedelta(days=TODAY.isoweekday() - 1)
     txs = [_tx(amount=400, tx_date=monday)]
     profile = _profile()
-    assert tier_calculator.compute_spending_tier(txs, profile, TODAY) == "pacing_warn"
+    tier = tier_calculator.compute_spending_tier(
+        txs, profile, TODAY, budget_window=_window(spent_this_week=400.0)
+    )
+    assert tier == "pacing_warn"
 
 
 def test_tier_no_goal_returns_pacing_good():
@@ -423,12 +457,16 @@ def test_tier_balanced():
 
 def test_tier_alignment_pacing_warn():
     """
-    Reproduces the exact scenario the frontend marks as pacing_warn:
-    weekly spend is between 80%–120% of weekly_limit.
+    Reproduces the exact scenario the frontend marks as pacing_warn: weekly spend
+    is high relative to an even daily burn but still UNDER the weekly allowance.
+    Both services read this off the same authoritative window (utils/paceVerdict.ts
+    mirrors pace_advisor), so the tier here matches the UFO's autonomous verdict.
     """
     monday = TODAY - timedelta(days=TODAY.isoweekday() - 1)
-    weekly_limit = 2000 / 4.3
-    spend = weekly_limit * 0.9  # 90% → pacing_warn
+    spend = WEEKLY_ALLOWANCE * 0.9  # 90% of the week's allowance on day 1
     txs = [_tx(amount=spend, tx_date=monday)]
     profile = _profile()
-    assert tier_calculator.compute_spending_tier(txs, profile, TODAY) == "pacing_warn"
+    tier = tier_calculator.compute_spending_tier(
+        txs, profile, TODAY, budget_window=_window(spent_this_week=spend)
+    )
+    assert tier == "pacing_warn"
