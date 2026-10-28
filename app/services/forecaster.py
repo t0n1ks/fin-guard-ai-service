@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
 
@@ -157,28 +158,48 @@ def predict_savings_accumulation(
 _SPARSE_DATA_DAYS = 5
 
 
-def _cycle_prediction(
+@dataclass(frozen=True)
+class _CycleFrame:
+    """The cycle facts a prediction is anchored to."""
+    cycle_start: date
+    total_days: int
+    days_elapsed: int        # >= 1, safe as a divisor
+    days_remaining: int
+    discretionary: float     # variable allowance for the whole cycle
+    spent_variable: float    # variable spend so far in the cycle
+
+
+def _has_authoritative_cycle(cycle: SalaryCycleInfo) -> bool:
+    """True when Go sent its computed cycle numbers (current backends)."""
+    return cycle.days_total > 0 and cycle.variable_allowance is not None
+
+
+def _frame_from_backend(cycle: SalaryCycleInfo, today: date) -> _CycleFrame:
+    """
+    Use Go's computeCycleStats figures verbatim — the same numbers the dashboard
+    shows. Go owns the cycle window (exact, timezone-aware boundaries, backdated
+    entries on their own date), so nothing here is re-derived from transaction
+    dates and the forecast can't disagree with the cards at a cycle boundary.
+    """
+    return _CycleFrame(
+        cycle_start=today - timedelta(days=max(0, cycle.days_elapsed)),
+        total_days=cycle.days_total,
+        days_elapsed=max(1, cycle.days_elapsed),
+        days_remaining=max(0, cycle.days_until_next_payout),
+        discretionary=cycle.variable_allowance or 0.0,
+        spent_variable=cycle.cycle_variable_expenses or 0.0,
+    )
+
+
+def _frame_from_transactions(
     transactions: list[TransactionItem],
     today: date,
     cycle: SalaryCycleInfo,
-) -> float:
+) -> _CycleFrame:
     """
-    Cycle-aware, stabilized prediction of end-of-cycle balance vs the variable
-    (discretionary) allowance. Fixed expenses are excluded from the run-rate.
-
-    Stabilization guards (prevent the "unhinged deficit" regression):
-      * Sparse-data fallback: with < _SPARSE_DATA_DAYS of history, use a simple
-        average instead of EWMA (EWMA over 1–4 days is dangerously volatile).
-      * Sanity cap: the projected daily rate can never exceed
-        (remaining_allowance / days_remaining) * 1.2 — so the projection stays
-        anchored to what's actually left, producing human-readable numbers.
-
-    Returns remaining_allowance − projected_remaining_variable_spend.
-    Negative = projected deficit; positive = projected surplus.
+    Fallback for older Go builds that don't send the authoritative numbers:
+    approximate the cycle from its dates and the transaction list.
     """
-    fixed_cat_id = cycle.fixed_exp_category_id
-
-    # Parse cycle boundaries (ISO timestamps → date).
     try:
         cycle_start = date.fromisoformat(cycle.cycle_start_at[:10])
     except (ValueError, TypeError):
@@ -197,7 +218,6 @@ def _cycle_prediction(
         except (ValueError, TypeError):
             pass
 
-    # Variable allowance = net discretionary budget for this cycle.
     discretionary = (cycle.var_needs_budget + cycle.var_wants_budget) or cycle.total_income * 0.8
 
     # Filter strictly to [cycle_start, cycle_end] — excludes transactions from
@@ -206,14 +226,64 @@ def _cycle_prediction(
         tx.amount
         for tx in transactions
         if tx.type == "expense"
-        and not _is_fixed(tx, fixed_cat_id)
+        and not _is_fixed(tx, cycle.fixed_exp_category_id)
         and tx.date >= cycle_start
         and (cycle_end is None or tx.date <= cycle_end)
     )
-    remaining_allowance = max(0.0, discretionary - spent_variable)
 
-    cycle_days_elapsed = max(1, (today - cycle_start).days)
-    days_remaining = max(0, cycle_total_days - cycle_days_elapsed)
+    days_elapsed = max(1, (today - cycle_start).days)
+    return _CycleFrame(
+        cycle_start=cycle_start,
+        total_days=cycle_total_days,
+        days_elapsed=days_elapsed,
+        days_remaining=max(0, cycle_total_days - days_elapsed),
+        discretionary=discretionary,
+        spent_variable=spent_variable,
+    )
+
+
+def _resolve_cycle_frame(
+    transactions: list[TransactionItem],
+    today: date,
+    cycle: SalaryCycleInfo,
+) -> _CycleFrame:
+    if _has_authoritative_cycle(cycle):
+        return _frame_from_backend(cycle, today)
+    return _frame_from_transactions(transactions, today, cycle)
+
+
+def _cycle_prediction(
+    transactions: list[TransactionItem],
+    today: date,
+    cycle: SalaryCycleInfo,
+) -> float:
+    """
+    Cycle-aware, stabilized prediction of end-of-cycle balance vs the variable
+    (discretionary) allowance. Fixed expenses are excluded from the run-rate.
+
+    The cycle facts (length, days left, allowance, spend) come from Go when it
+    sends them (see _resolve_cycle_frame); only the run-rate is estimated here.
+
+    Stabilization guards (prevent the "unhinged deficit" regression):
+      * Sparse-data fallback: with < _SPARSE_DATA_DAYS of history, use a simple
+        average instead of EWMA (EWMA over 1–4 days is dangerously volatile).
+      * Sanity cap: the projected daily rate can never exceed
+        (remaining_allowance / days_remaining) * 1.2 — so the projection stays
+        anchored to what's actually left, producing human-readable numbers.
+
+    Returns remaining_allowance − projected_remaining_variable_spend.
+    Negative = projected deficit; positive = projected surplus.
+    """
+    fixed_cat_id = cycle.fixed_exp_category_id
+    frame = _resolve_cycle_frame(transactions, today, cycle)
+    cycle_start = frame.cycle_start
+    cycle_total_days = frame.total_days
+    cycle_days_elapsed = frame.days_elapsed
+    days_remaining = frame.days_remaining
+    discretionary = frame.discretionary
+    spent_variable = frame.spent_variable
+
+    remaining_allowance = max(0.0, discretionary - spent_variable)
     if days_remaining == 0:
         return round(remaining_allowance, 2)
 

@@ -78,6 +78,15 @@ class SalaryCycleInfo(BaseModel):
     cycle_active: bool = False           # cycle exists and today is within it
     is_lite: bool = False                # user opted into Lite mode
 
+    # ── Authoritative cycle totals & timing (Go computeCycleStats) ────────────
+    # The cycle window, its length and its spend are decided ONLY by Go (exact,
+    # timezone-aware boundaries). The forecaster consumes these verbatim; the
+    # None/0 defaults mark an older Go build that doesn't send them.
+    days_total: int = 0                          # whole days start → payday
+    days_elapsed: int = 0                        # completed days since start
+    variable_allowance: Optional[float] = None   # income − savings − fixed
+    cycle_variable_expenses: Optional[float] = None  # variable spend in the window
+
 
 class BudgetWindowInfo(BaseModel):
     """Optional — present for users WITHOUT an active salary cycle.

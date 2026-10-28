@@ -380,6 +380,54 @@ def test_cycle_next_payday_changes_days_remaining():
     assert short_res >= long_res
 
 
+# ─── Unit: forecaster consumes Go's authoritative cycle numbers ──────────────
+
+def test_cycle_uses_backend_numbers_after_payday():
+    """Payday has passed but the next cycle isn't started yet: Go keeps the
+    cycle current and counts the new spend (incl. a backdated entry). Python
+    must use Go's figures, not drop post-payday transactions by date."""
+    cycle = _cycle(
+        cycle_start_at="2026-09-28T08:00:00+00:00",
+        next_payday_at="2026-10-28T00:00:00+00:00",
+        days_total=30, days_elapsed=31, days_until_next_payout=0,
+        variable_allowance=404.0, cycle_variable_expenses=354.0,
+    )
+    txs = [
+        _var_tx(344.0, date(2026, 10, 10)),
+        _var_tx(7.0, date(2026, 10, 29), tx_id=2),  # after payday, still counted by Go
+        _var_tx(3.0, date(2026, 10, 28), tx_id=3),
+    ]
+    result = forecaster.predict_end_of_month_balance(
+        txs, date(2026, 10, 29), 504.0, salary_cycle=cycle
+    )
+    assert result == 50.0  # 404 − 354, nothing left to project
+
+
+def test_cycle_backend_numbers_override_transaction_rederivation():
+    """With authoritative numbers present, the allowance and spend come from Go
+    even when the transaction list (by date) would say otherwise."""
+    cycle = _cycle(
+        days_total=30, days_elapsed=10, days_until_next_payout=20,
+        variable_allowance=1000.0, cycle_variable_expenses=100.0,
+    )
+    # By date this list sums to 900 of variable spend — Go says 100.
+    txs = [_var_tx(900.0, date(2026, 5, 2))]
+    authoritative = forecaster.predict_end_of_month_balance(
+        txs, date(2026, 5, 11), 2000.0, salary_cycle=cycle
+    )
+    remaining = 1000.0 - 100.0
+    assert authoritative > -remaining * 0.2 - 0.01
+    assert authoritative <= remaining
+
+
+def test_cycle_without_backend_numbers_keeps_legacy_path():
+    """Older Go builds don't send the new fields: the legacy derivation applies."""
+    cycle = _cycle()  # days_total=0, variable_allowance=None
+    frame = forecaster._resolve_cycle_frame([], date(2026, 5, 8), cycle)
+    assert frame.total_days == 30
+    assert frame.discretionary == 985.0
+
+
 # ─── Unit: tier_calculator ───────────────────────────────────────────────────
 
 
