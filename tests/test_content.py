@@ -21,7 +21,7 @@ DISPLAY_CAP = 140
 
 # Floors for the current batch; raised as the pool fills (targets: jokes 180,
 # facts 180, tips 90, exits 30, nudges 20, message variants ~100).
-FLOORS = {"jokes": 200, "facts": 15, "tips": 55, "exits": 30, "quota": 8, "encouragements": 15}
+FLOORS = {"jokes": 200, "facts": 180, "tips": 55, "exits": 30, "quota": 8, "encouragements": 15}
 
 # Numbers Go sends per message type (see app/data/pool/messages.py).
 MESSAGE_SLOTS = {
@@ -49,7 +49,7 @@ SHAME = {
     "en": r"\b(fail|failed|failure|bad|shame|shameful|terrible|guilty|wasted|irresponsible|stupid|lazy)\b",
     "de": r"(versag|schlecht|schäm|schande|schrecklich|schuldig|verschwend|dumm|faul\b)",  # „Schuld“ alone = debt
     "ru": r"(провал|плох|стыд|позор|ужасн|винова|растратил|безответствен|глуп|лентя)",
-    "uk": r"(провал|погано|поганий|сором(?!'я)|ганьб|жахлив|винн|розтратив|безвідповідальн|дурн|ледач)",  # not сором'язливий (shy)
+    "uk": r"(провал|погано|поганий|сором(?!'я)|ганьб|жахлив|винуват|розтратив|безвідповідальн|дурн|ледач)",  # not сором'язливий (shy)
 }
 # Slurs and gross insults (stems). Nothing like this may ever ship.
 SLURS = {
