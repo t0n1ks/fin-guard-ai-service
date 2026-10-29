@@ -19,9 +19,10 @@ from app.services.locale_format import format_slots
 
 DISPLAY_CAP = 140
 
-# Floors for the current batch; raised as the pool fills (targets: jokes 180,
-# facts 180, tips 90, exits 30, nudges 20, message variants ~100).
-FLOORS = {"jokes": 200, "facts": 180, "tips": 55, "exits": 30, "quota": 8, "encouragements": 15}
+# Pool targets (jokes counts universal + language-locked; each language also
+# needs 180 universal jokes — see the joke test). With the daily caps these
+# give ~90 days without a repeated joke, fact or tip.
+FLOORS = {"jokes": 200, "facts": 180, "tips": 90, "exits": 30, "quota": 8, "encouragements": 15}
 
 # Numbers Go sends per message type (see app/data/pool/messages.py).
 MESSAGE_SLOTS = {
