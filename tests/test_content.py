@@ -21,7 +21,7 @@ DISPLAY_CAP = 140
 
 # Floors for the current batch; raised as the pool fills (targets: jokes 180,
 # facts 180, tips 90, exits 30, nudges 20, message variants ~100).
-FLOORS = {"jokes": 70, "facts": 15, "tips": 55, "exits": 30, "quota": 8, "encouragements": 15}
+FLOORS = {"jokes": 200, "facts": 15, "tips": 55, "exits": 30, "quota": 8, "encouragements": 15}
 
 # Numbers Go sends per message type (see app/data/pool/messages.py).
 MESSAGE_SLOTS = {
@@ -104,9 +104,11 @@ def test_universal_items_exist_in_all_four_languages_and_locked_in_one():
             assert set(texts) == set(LANGS), f"{where}:{it.id} is missing {set(LANGS) - set(texts)}"
 
 
-def test_language_locked_jokes_exist():
-    locked = [it for it in BUCKET_ITEMS["jokes"] if it.only]
-    assert locked and all(it.only in LANGS for it in locked)
+def test_jokes_reach_the_target_and_every_language_has_locked_extras():
+    jokes = [it for it in BUCKET_ITEMS["jokes"] if not it.retired]
+    assert sum(1 for it in jokes if not it.only) >= 180
+    for lang in LANGS:
+        assert sum(1 for it in jokes if it.only == lang) >= 5, lang
 
 
 @pytest.mark.parametrize("bucket", [b for b in BUCKET_ITEMS])
