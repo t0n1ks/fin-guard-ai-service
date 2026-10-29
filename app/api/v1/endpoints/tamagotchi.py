@@ -8,7 +8,7 @@ from app.api.v1.endpoints.analyze import verify_api_key
 from app.data.pool import ENCOURAGEMENTS
 from app.models.response import NextActionResponse
 from app.services.tamagotchi_action import get_categorized_content, get_next_action
-from app.services.user_day import resolve_today
+from app.services.user_day import resolve_hour, resolve_today
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -41,11 +41,13 @@ def next_tamagotchi_action(
     language: str = Query(default="EN", description="Language code: EN, RU, UA, DE"),
     context: str | None = Query(default=None, description="Budget health hint: good|warn|over"),
     local_date: str | None = Query(default=None, description="User's local date (YYYY-MM-DD) from Go"),
+    local_hour: str | None = Query(default=None, description="User's local hour (0-23) from Go, picks the greeting"),
 ) -> NextActionResponse:
     lang = _resolve_lang(language)
     logger.info("[tamagotchi] next-action uid=%d raw_lang=%r resolved_lang=%s ctx=%r", user_id, language, lang, context)
     try:
-        return get_next_action(user_id=user_id, language=lang, context=context, today=resolve_today(local_date))
+        return get_next_action(user_id=user_id, language=lang, context=context,
+                               today=resolve_today(local_date), hour=resolve_hour(local_hour))
     except Exception:
         logger.exception("[tamagotchi] get_next_action failed — serving local fallback")
         iso = {"UA": "uk"}.get(lang, lang.lower())

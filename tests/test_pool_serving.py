@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+from app.data import content as greetings
 from app.data.pool import BUCKET_ITEMS
 from app.data.pool.model import L, U
 from app.main import app
@@ -240,3 +241,37 @@ def test_legacy_seen_texts_are_imported_then_dropped():
     with seen_store.session(11) as state:
         assert state.bucket("jokes").seen(0)
     assert "seen_jokes" not in content_tracker._load_user(11)
+
+
+# ── the greeting follows the user's local hour (Go sends it) ─────────────────
+
+def _greeting(user_id: int, **params) -> str:
+    resp = client.get("/v1/tamagotchi/next-action", params={"user_id": user_id, "language": "EN", **params}, headers=KEY).json()
+    assert resp["type"] == "GREETING"
+    return resp["content"]
+
+
+def test_greeting_is_picked_by_the_users_local_hour(monkeypatch):
+    monkeypatch.setattr(user_day, "utc_hour", lambda: 7)  # UTC 07:00 = 08:00 in Berlin (winter)
+    assert _greeting(30, local_hour="8") in greetings.GREETINGS["EN"]["morning"]
+    monkeypatch.setattr(user_day, "utc_hour", lambda: 2)  # UTC is "night" — the user's evening wins
+    assert _greeting(31, local_hour="20") in greetings.GREETINGS["EN"]["evening"]
+
+
+def test_greeting_falls_back_to_the_utc_hour(monkeypatch):
+    monkeypatch.setattr(user_day, "utc_hour", lambda: 14)
+    assert _greeting(32) in greetings.GREETINGS["EN"]["afternoon"]
+    assert _greeting(33, local_hour="25") in greetings.GREETINGS["EN"]["afternoon"]
+    assert _greeting(34, local_hour="x") in greetings.GREETINGS["EN"]["afternoon"]
+
+
+def test_greeting_still_once_per_local_day():
+    day = user_day.utc_today().isoformat()
+    _greeting(35, local_date=day, local_hour="8")
+    resp = client.get("/v1/tamagotchi/next-action", params={"user_id": 35, "language": "EN", "local_date": day, "local_hour": "20"}, headers=KEY).json()
+    assert resp["type"] != "GREETING"
+
+
+def test_resolve_hour():
+    assert user_day.resolve_hour(0) == 0 and user_day.resolve_hour("23") == 23
+    assert user_day.resolve_hour(None) == user_day.resolve_hour(-1) == user_day.utc_hour()

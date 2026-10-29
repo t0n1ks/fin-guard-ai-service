@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from datetime import date, datetime
+from datetime import date
 
 from app.data.content import (
     CHEERFUL_GREETINGS,
@@ -19,6 +19,7 @@ from app.services.content_tracker import (
     serve_item,
     tip_available_today,
 )
+from app.services.user_day import resolve_hour
 from app.services.visit_tracker import get_visit_mood
 
 _ANIMATION_HINTS = ["COW_ABDUCTION", "COIN_COLLECT", "FLY_BY_MOON"]
@@ -31,8 +32,8 @@ _CATEGORY_BUCKETS = {
 }
 
 
-def _get_time_segment() -> str:
-    hour = datetime.now().hour
+def _get_time_segment(hour: int) -> str:
+    """The greeting's part of the day for the user's LOCAL hour (0–23)."""
     if 5 <= hour < 12:
         return "morning"
     if 12 <= hour < 17:
@@ -108,7 +109,7 @@ def get_categorized_content(
 
 
 def get_next_action(user_id: int, language: str, context: str | None = None,
-                    today: date | None = None) -> NextActionResponse:
+                    today: date | None = None, hour: int | None = None) -> NextActionResponse:
     """The ambient channel: pending advice, the daily greeting, at most one tip
     a day, else an encouragement or a quiet animation. Jokes and facts are
     never served here — they belong to the cow and the star (and their caps)."""
@@ -126,7 +127,7 @@ def get_next_action(user_id: int, language: str, context: str | None = None,
         elif mood == "grumpy":
             pool = GRUMPY_GREETINGS.get(lang_up, GRUMPY_GREETINGS["EN"])
         else:
-            segment = _get_time_segment()
+            segment = _get_time_segment(resolve_hour(hour))
             pool = GREETINGS.get(lang_up, GREETINGS["EN"])[segment]
 
         greeting = random.choice(pool)
