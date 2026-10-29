@@ -54,7 +54,7 @@ Each call to `POST /v1/analyze-behavior` runs five parallel computations — all
 | **Spending tier** | Rule-based classification: payday detection, weekly pace vs monthly limit, category diversity check | `spending_tier: str` (6 states) |
 | **Multilingual nudge** | Template selection by tier + risk flags; variable substitution (rate, days left, top category); 99-char limit enforced | `smart_nudge: str` (EN/DE/RU/UA) |
 
-The mood mapping (`thriving / content / worried / stressed / exhausted`) is derived from the composite health score after all five components are computed.
+The mood mapping (`thriving / content / worried / stressed / exhausted`) is derived from the composite health score after all five components are computed. The app's UFO no longer uses this mood: since Phase 2.21 the Go backend owns the companion's health and mood (from the cycle's real figures); the score still informs the nudge's risk flags.
 
 ---
 
@@ -169,6 +169,22 @@ Category-locked content for **user-initiated** UFO entities (e.g. tapping the Co
   "animation_hint": "COW_ABDUCTION"
 }
 ```
+
+---
+
+### `POST /v1/companion/render`
+
+Words a companion message the Go backend has already chosen (Go decides what to say and when; this service only phrases it). Picks a variant from `app/data/companion_messages.py` for the type, tone and language, fills in the numbers (amounts formatted with the user's currency), and never repeats the variant the user saw last for that type.
+
+**Auth:** `X-Brain-API-Key` header required.
+
+**Request body:**
+```json
+{ "user_id": 42, "type": "last_days", "tone": "supportive", "language": "ru",
+  "currency": "EUR", "slots": { "remaining": 45.0, "days_left": 3, "daily": 15.0 } }
+```
+
+**Response:** `{ "text": "…" }`, or `{ "text": null }` when there is no variant (the pool is filled in Stage D) — the app then uses its own four-language fallback.
 
 ---
 
