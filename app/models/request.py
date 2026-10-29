@@ -116,3 +116,7 @@ class AnalyzeBehaviorRequest(BaseModel):
     user_categories: list[str] = Field(default_factory=list)
     salary_cycle: Optional[SalaryCycleInfo] = None
     budget_window: Optional[BudgetWindowInfo] = None
+    # Go's end-of-period budget projection (budget left at payday / month end
+    # at the real average pace) — the number the forecast card shows. When
+    # present it is used as-is, so nudges can never contradict the card.
+    period_end_forecast: Optional[float] = None

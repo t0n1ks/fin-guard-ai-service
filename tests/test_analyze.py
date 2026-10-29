@@ -149,6 +149,28 @@ def test_full_analyze_happy_path():
     assert len(data["smart_nudge"]) > 0
 
 
+def test_period_end_forecast_from_go_is_used_as_is():
+    # Go's projection (here a deficit) is the response's end-of-period figure,
+    # never re-derived — so the tamagotchi cannot contradict the forecast card.
+    resp = client.post(
+        "/v1/analyze-behavior",
+        json={**SAMPLE_REQUEST, "period_end_forecast": -123.45},
+        headers={"x-brain-api-key": VALID_KEY},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["predicted_end_of_month_balance"] == -123.45
+
+
+def test_period_end_forecast_absent_keeps_local_estimate():
+    resp = client.post(
+        "/v1/analyze-behavior",
+        json=SAMPLE_REQUEST,
+        headers={"x-brain-api-key": VALID_KEY},
+    )
+    assert resp.status_code == 200
+    assert isinstance(resp.json()["predicted_end_of_month_balance"], float)
+
+
 def test_empty_transactions_does_not_crash():
     payload = {**SAMPLE_REQUEST, "transactions": []}
     resp = client.post(

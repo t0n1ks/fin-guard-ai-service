@@ -41,9 +41,14 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
         transactions, profile, today
     )
     sustainability = sustainability_scorer.compute_sustainability_score(transactions, today)
-    predicted_balance = forecaster.predict_end_of_month_balance(
-        transactions, today, profile.expected_salary, salary_cycle=body.salary_cycle
-    )
+    # Go is authoritative for the end-of-period projection; the local
+    # estimate is only a fallback for callers that don't send it.
+    if body.period_end_forecast is not None:
+        predicted_balance = body.period_end_forecast
+    else:
+        predicted_balance = forecaster.predict_end_of_month_balance(
+            transactions, today, profile.expected_salary, salary_cycle=body.salary_cycle
+        )
     predicted_savings = forecaster.predict_savings_accumulation(
         transactions, today, profile, salary_cycle=body.salary_cycle
     )
