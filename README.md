@@ -67,18 +67,33 @@ The mood mapping (`thriving / content / worried / stressed / exhausted`) is deri
 | `sustainability_score` | 1–100 | Ratio of "green" (recurring, essential) vs. volatile spending |
 | `predicted_end_of_month_balance` | float | Linear regression over daily expense totals; falls back to daily average with < 7 data points |
 
-### Tamagotchi Content Engine
-- **ADVICE** — AI-generated personalised nudge based on current spending tier and risk flags; stored as pending until the UFO is idle
-- **GREETING** — time-aware hello (morning / afternoon / evening / night), shown once per day per user
-- **JOKE** — up to 3 finance jokes per day, never repeated within a session (shuffle queue)
-- **FACT** — up to 5 financial facts per day, with the same non-repeat guarantee
-- **ENCOURAGEMENT** — positive reinforcement message when the daily content pool is exhausted
-- **RANDOM_ANIMATION** — silent UFO event (cow abduction, coin shower, moon fly-by) as a final fallback
-- **Apology mode** — after 2+ rejections in a day, messages are prefixed with a friendly retry phrase instead of being silenced
-- **Language routing** — all content served in the language specified by the frontend query param (`?language=uk`); ISO 639-1 `uk` is normalised to internal code `UA` at every layer
+### Companion content pool (`app/data/pool/`)
+All UFO wording lives in plain data files — never in database rows. Each bucket is an **append-only list** (an item's position is permanent; a removed item is marked `retired`). Items are **universal** (written once, translated into EN/DE/RU/UK) or **language-locked** (a pun that only works in one language is shown only to that language).
 
-### State Persistence
-Per-user daily state (joke queue position, greeting flag, rejection count, pending advice) is stored in **Neon PostgreSQL** when `DATABASE_URL` is set, with automatic fallback to a local JSON file for development.
+| Bucket | Where it appears | Daily cap |
+|---|---|---|
+| Jokes | the space cow | 2 |
+| Facts | the shining star | 2 |
+| Tips | an ambient UFO line | 1 |
+| Exit lines | when a message is closed with ✕ | — |
+| Quota lines | the cow / star once today's two are done | — |
+| Encouragements | ambient fallback line | — |
+| Message variants | the Go companion's contextual messages (incl. the weekly star/cow nudges) | Go's pacing |
+
+**No repeats:** a user is served items they haven't seen yet. When a bucket is exhausted, repeats may begin (never the last few shown), and the seen-set is reset only when the pass is at least **60 days** old — never while unseen items remain. Items added later are served first. Seen-state is shared across languages. With the caps, the target pool (180 jokes, 180 facts, 90 tips) means no repeated joke or fact for ~90 days. Facts are accurate and evergreen; any calculation states its assumption and specific claims name their source.
+
+**Safety:** tests scan every line in all four languages for shaming words and slurs.
+
+### State persistence (compact, one user at a time)
+- **`companion_seen`** — one binary row per user: a bitset per bucket, the day each pass began and the last few items / variants shown. About **200 bytes** of data (≈0.25 KB per user with row overhead) even at the full target pool size.
+- **`tamagotchi_daily_state`** — one small row per user: today's date, how many jokes / facts / tips were served, the greeting flag and the pending advice. No item text.
+
+Both live in the service's PostgreSQL (`DATABASE_URL`) with a JSON-file fallback for development; every read and write touches only the current user's row. Other rows: `visit_stats` (visit streak) and `ai_learner_state` (smoothed spending tracker). The app's companion health and mood are owned by the Go backend, not here.
+
+- **ADVICE** — personalised nudge from `/analyze-behavior`, stored as pending
+- **GREETING** — time-aware hello, once per day per user
+- **TIP / ENCOURAGEMENT / RANDOM_ANIMATION** — the ambient channel (`next-action`), a tip at most once a day
+- **Language routing** — `?language=uk` is normalised to `UA` internally; pool items use `en/de/ru/uk`
 
 ---
 
@@ -157,7 +172,7 @@ Returns the next action the Tamagotchi UFO should perform.
 
 ### `GET /v1/tamagotchi/content?user_id=42&category=joke&language=EN`
 
-Category-locked content for **user-initiated** UFO entities (e.g. tapping the Cow requests a `joke`, the Star requests a `fact`) — distinct from the automatic `next-action` scheduler. `category` is one of `joke`, `fact`, `advice`.
+Category-locked content for **user-initiated** UFO entities (the Cow requests a `joke`, the Star a `fact`, a closed message an `exit` line) — distinct from the automatic `next-action` scheduler. `category` is one of `joke`, `fact`, `exit`, `advice`. Past the daily cap (2 jokes / 2 facts) the response is `type: "QUOTA"` with a short "more tomorrow" line.
 
 **Auth:** `X-Brain-API-Key` header required.
 
@@ -174,7 +189,7 @@ Category-locked content for **user-initiated** UFO entities (e.g. tapping the Co
 
 ### `POST /v1/companion/render`
 
-Words a companion message the Go backend has already chosen (Go decides what to say and when; this service only phrases it). Picks a variant from `app/data/companion_messages.py` for the type, tone and language, fills in the numbers (amounts formatted with the user's currency), and never repeats the variant the user saw last for that type.
+Words a companion message the Go backend has already chosen (Go decides what to say and when; this service only phrases it). Picks a variant from `app/data/pool/messages.py` for the type and language, fills in the numbers the way the language writes them (decimal comma for DE/RU/UK, the user's currency), never one of the last few variants the user saw for that type. Variants marked `calibrating` are used only while Go flags the first week of a period.
 
 **Auth:** `X-Brain-API-Key` header required.
 
@@ -184,7 +199,7 @@ Words a companion message the Go backend has already chosen (Go decides what to 
   "currency": "EUR", "slots": { "remaining": 45.0, "days_left": 3, "daily": 15.0 } }
 ```
 
-**Response:** `{ "text": "…" }`, or `{ "text": null }` when there is no variant (the pool is filled in Stage D) — the app then uses its own four-language fallback.
+**Response:** `{ "text": "…" }`, or `{ "text": null }` when no variant fits — the app then uses its own four-language fallback.
 
 ---
 

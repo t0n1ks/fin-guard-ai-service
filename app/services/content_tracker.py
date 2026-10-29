@@ -1,31 +1,67 @@
+"""
+Per-user content serving for the UFO: jokes (the cow), facts (the star),
+tips and encouragements (ambient lines), exit and quota lines, plus the small
+daily flags (greeting served, pending advice).
+
+Two kinds of per-user state, both touched one user at a time:
+
+  * which pool items the user has seen — the compact bitset row in
+    ``seen_store`` (~0.2–0.3 KB), never item text;
+  * a tiny daily row (``tamagotchi_daily_state``): today's date and language,
+    how many jokes / facts / tips were served today, the greeting flag and
+    the pending advice. No item text, no queues.
+
+Daily caps (jokes 2, facts 2, tips 1) make the pool sizes last: at the cap a
+user meets no repeated joke or fact for ~90 days (see pool_picker.py).
+"""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import random
 import tempfile
 import threading
 from datetime import date as date_type
+from typing import Optional
 
-from app.data.content import BUDGET_TIPS, ENCOURAGEMENTS, FACTS, JOKES, STATISTICS
-
-# Maps Python content-dict keys to frontend ISO codes
-_LANG_NORM: dict[str, str] = {"EN": "en", "DE": "de", "RU": "ru", "UA": "uk"}
+from app.data.pool import BUCKET_ITEMS
+from app.data.pool.model import Item
+from app.services import seen_store
+from app.services.pool_picker import pick_item
 
 logger = logging.getLogger(__name__)
+
+# Maps the service's language codes to the pool's ISO codes.
+_LANG_NORM: dict[str, str] = {"EN": "en", "DE": "de", "RU": "ru", "UA": "uk", "UK": "uk"}
+
+DAILY_CAPS = {"jokes": 2, "facts": 2, "tips": 1}
+_SERVED_KEY = {"jokes": "jokes_served", "facts": "facts_served", "tips": "tips_served"}
+_ADVICE_MEMORY = 50  # hashes of recently served advice (dedup), not the texts
+
+# Only these keys are stored; anything else in a legacy row is dropped on save.
+_DAILY_KEYS = ("date", "language", "jokes_served", "facts_served", "tips_served",
+               "greeting_served", "pending_advice", "advice_consumed", "seen_advice")
+# Legacy (pre-pool) rows kept every seen text; they are imported once.
+_LEGACY_SEEN = {"seen_jokes": "jokes", "seen_facts": "facts", "seen_budget_tips": "tips",
+                "seen_encouragements": "encouragements"}
+
+_DB_URL = os.getenv("DATABASE_URL")
+_USE_DB = bool(_DB_URL)
+STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "state", "daily_state.json")
+_lock = threading.Lock()
+
+
+def iso(language: str) -> str:
+    """Service language code (EN/DE/RU/UA) → pool code (en/de/ru/uk)."""
+    return _LANG_NORM.get(language.upper(), language.lower() if language.lower() in ("en", "de", "ru", "uk") else "en")
+
 
 def _cap(text: str) -> str:
     return text if len(text) <= 140 else text[:139] + "…"
 
-# ─── Storage backend ──────────────────────────────────────────────────────────
 
-_DB_URL = os.getenv("DATABASE_URL")
-_USE_DB = bool(_DB_URL)
-
-_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "state", "daily_state.json")
-_lock = threading.Lock()
-
+# ─── Daily row: one user per read / write ──────────────────────────────────────
 
 def _ensure_db_table() -> None:
     import psycopg2
@@ -44,408 +80,179 @@ def _ensure_db_table() -> None:
 if _USE_DB:
     try:
         _ensure_db_table()
-        logger.info("content_tracker: using Neon PostgreSQL for state persistence")
-    except Exception as exc:
+        logger.info("content_tracker: using PostgreSQL for state persistence")
+    except Exception as exc:  # pragma: no cover - depends on the deployment
         logger.warning("content_tracker: DB table setup failed (%s) — falling back to file", exc)
         _USE_DB = False
 
 
-# ─── File backend ─────────────────────────────────────────────────────────────
+def _db_load(user_id: int) -> dict:
+    import psycopg2
+    with psycopg2.connect(_DB_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM tamagotchi_daily_state WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+    return dict(row[0]) if row else {}
 
-def _file_load_state() -> dict:
+
+def _db_save(user_id: int, data: dict) -> None:
+    import psycopg2
+    import psycopg2.extras
+    with psycopg2.connect(_DB_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tamagotchi_daily_state (user_id, date, data) VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET date = EXCLUDED.date, data = EXCLUDED.data
+                """,
+                (user_id, data.get("date", ""), psycopg2.extras.Json(data)),
+            )
+        conn.commit()
+
+
+def _file_read() -> dict:
     try:
-        with open(_STATE_FILE, encoding="utf-8") as f:
+        with open(STATE_FILE, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
 
 
-def _file_save_state(state: dict) -> None:
-    dir_path = os.path.dirname(_STATE_FILE)
-    os.makedirs(dir_path, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, _STATE_FILE)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+def _file_save(user_id: int, data: dict) -> None:
+    all_rows = _file_read()
+    all_rows[str(user_id)] = data
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(STATE_FILE), suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(all_rows, f, ensure_ascii=False)
+    os.replace(tmp, STATE_FILE)
 
 
-# ─── PostgreSQL backend ───────────────────────────────────────────────────────
-
-def _db_load_state() -> dict:
-    import psycopg2
-    import psycopg2.extras
-    with psycopg2.connect(_DB_URL) as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT user_id, data FROM tamagotchi_daily_state")
-            rows = cur.fetchall()
-    return {str(row["user_id"]): dict(row["data"]) for row in rows}
+def _load_user(user_id: int) -> dict:
+    return _db_load(user_id) if _USE_DB else _file_read().get(str(user_id), {})
 
 
-def _db_save_state(state: dict) -> None:
-    import psycopg2
-    import psycopg2.extras
-    with psycopg2.connect(_DB_URL) as conn:
-        with conn.cursor() as cur:
-            for user_id_str, data in state.items():
-                cur.execute(
-                    """
-                    INSERT INTO tamagotchi_daily_state (user_id, date, data)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (user_id) DO UPDATE
-                        SET date = EXCLUDED.date,
-                            data = EXCLUDED.data
-                    """,
-                    (int(user_id_str), data.get("date", ""), psycopg2.extras.Json(data)),
-                )
-        conn.commit()
-
-
-# ─── Unified load / save ──────────────────────────────────────────────────────
-
-def _load_state() -> dict:
-    return _db_load_state() if _USE_DB else _file_load_state()
-
-
-def _save_state(state: dict) -> None:
+def _save_user(user_id: int, data: dict) -> None:
+    slim = {k: data[k] for k in _DAILY_KEYS if k in data}
     if _USE_DB:
-        _db_save_state(state)
+        _db_save(user_id, slim)
     else:
-        _file_save_state(state)
+        _file_save(user_id, slim)
 
 
-# ─── State helpers ────────────────────────────────────────────────────────────
-
-def _reset_category(u: dict, queue_key: str, seen_key: str, pool: dict[str, list[str]], language: str) -> None:
-    """Cycle reset: refill a category's queue from the full pool (reshuffled) and
-    clear its seen-list. Called when the unseen queue is exhausted so the user
-    starts a fresh non-repeating cycle through the whole pool."""
-    items = list(pool.get(language, pool.get("EN", [])))
-    random.shuffle(items)
-    u[queue_key] = items
-    u[seen_key] = []
-
-
-def _ensure_user_state(state: dict, user_id: int, language: str, today: str) -> None:
-    key = str(user_id)
-    existing = state.get(key, {})
-    same_day = existing.get("date") == today
-    same_lang = existing.get("language") == language
-
-    if same_day and same_lang:
-        # Backfill seen lists for state created before this feature
-        if "seen_jokes" not in existing:
-            existing["seen_jokes"] = []
-        if "seen_facts" not in existing:
-            existing["seen_facts"] = []
-        if "seen_budget_tips" not in existing:
-            existing["seen_budget_tips"] = []
-        if "seen_stats" not in existing:
-            existing["seen_stats"] = []
-        if "seen_advice" not in existing:
-            existing["seen_advice"] = []
-        state[key] = existing
-        return
-
-    all_jokes = list(JOKES.get(language, JOKES["EN"]))
-    all_facts = list(FACTS.get(language, FACTS["EN"]))
-    all_budget_tips = list(BUDGET_TIPS.get(language, BUDGET_TIPS["EN"]))
-    all_stats = list(STATISTICS.get(language, STATISTICS["EN"]))
-
-    if same_lang:
-        # Carry cross-day seen lists forward
-        seen_jokes: list = existing.get("seen_jokes", [])
-        seen_facts: list = existing.get("seen_facts", [])
-        seen_budget_tips: list = existing.get("seen_budget_tips", [])
-        seen_stats: list = existing.get("seen_stats", [])
-    else:
-        # Language changed — start fresh
-        seen_jokes = []
-        seen_facts = []
-        seen_budget_tips = []
-        seen_stats = []
-
-    # Build today's queue from unseen items only
-    unseen_jokes = [j for j in all_jokes if j not in seen_jokes]
-    if not unseen_jokes:
-        seen_jokes = []
-        unseen_jokes = list(all_jokes)
-
-    unseen_facts = [f for f in all_facts if f not in seen_facts]
-    if not unseen_facts:
-        seen_facts = []
-        unseen_facts = list(all_facts)
-
-    unseen_budget_tips = [b for b in all_budget_tips if b not in seen_budget_tips]
-    if not unseen_budget_tips:
-        seen_budget_tips = []
-        unseen_budget_tips = list(all_budget_tips)
-
-    unseen_stats = [s for s in all_stats if s not in seen_stats]
-    if not unseen_stats:
-        seen_stats = []
-        unseen_stats = list(all_stats)
-
-    random.shuffle(unseen_jokes)
-    random.shuffle(unseen_facts)
-    random.shuffle(unseen_budget_tips)
-    random.shuffle(unseen_stats)
-
-    # Encouragement + advice no-repeat: reset cross-language but preserve cross-day
-    if same_lang:
-        seen_encouragements: list = existing.get("seen_encouragements", [])
-        seen_advice: list = existing.get("seen_advice", [])
-    else:
-        seen_encouragements = []
-        seen_advice = []
-
-    all_encouragements = list(ENCOURAGEMENTS.get(language, ENCOURAGEMENTS["EN"]))
-    unseen_encouragements = [e for e in all_encouragements if e not in seen_encouragements]
-    if not unseen_encouragements:
-        seen_encouragements = []
-        unseen_encouragements = list(all_encouragements)
-    random.shuffle(unseen_encouragements)
-
-    state[key] = {
-        "date": today,
-        "language": language,
-        "joke_queue": unseen_jokes,
-        "fact_queue": unseen_facts,
-        "budget_tip_queue": unseen_budget_tips,
-        "stat_queue": unseen_stats,
-        "jokes_served": 0,
-        "facts_served": 0,
-        "budget_tips_served": 0,
-        "stats_served": 0,
-        "seen_jokes": seen_jokes,
-        "seen_facts": seen_facts,
-        "seen_budget_tips": seen_budget_tips,
-        "seen_stats": seen_stats,
-        "encouragement_queue": unseen_encouragements,
-        "seen_encouragements": seen_encouragements,
-        # Persistent advice de-dup — carried across days (same language) so the
-        # same nudge is never repeated, while the frontend list still resets daily.
-        "seen_advice": seen_advice,
-        # Preserve pending advice only when it was generated in the same language today
-        "pending_advice": existing.get("pending_advice", "") if (same_day and same_lang) else "",
-        "advice_consumed": existing.get("advice_consumed", True) if (same_day and same_lang) else True,
-        "greeting_served": existing.get("greeting_served", False) if same_day else False,
-    }
+def _today(u: dict, language: str | None = None) -> dict:
+    """Roll the daily counters over on a new day."""
+    today = date_type.today().isoformat()
+    if u.get("date") != today:
+        u.update({"date": today, "jokes_served": 0, "facts_served": 0, "tips_served": 0,
+                  "greeting_served": False, "pending_advice": "", "advice_consumed": True})
+    if language:
+        u["language"] = language
+    return u
 
 
-# ─── Public API ───────────────────────────────────────────────────────────────
-
-def _build_translations(text: str, source: dict[str, list[str]], language: str) -> dict[str, str]:
-    """Return all-language translations for a content item located by its text in the source dict."""
-    lang_up = language.upper()
-    source_list = list(source.get(lang_up, source.get("EN", [])))
-    try:
-        idx = source_list.index(text)
-    except ValueError:
-        return {_LANG_NORM.get(lang_up, lang_up.lower()): _cap(text)}
-    translations: dict[str, str] = {}
-    for code, items in source.items():
-        if idx < len(items):
-            iso = _LANG_NORM.get(code, code.lower())
-            translations[iso] = _cap(items[idx])
-    return translations
+def _import_legacy_seen(u: dict, state: seen_store.SeenState) -> None:
+    """A legacy row listed every seen text; mark those items as seen once."""
+    for key, bucket in _LEGACY_SEEN.items():
+        texts = set(u.get(key) or [])
+        if not texts:
+            continue
+        b = state.bucket(bucket)
+        for i, item in enumerate(BUCKET_ITEMS[bucket]):
+            if texts & set(item.tr.values()):
+                b.mark(i)
 
 
-def get_next_joke(
-    user_id: int, language: str, enforce_daily_cap: bool = True
-) -> tuple[str | None, dict[str, str]]:
-    """Return the next unseen joke. enforce_daily_cap is True for the proactive
-    channel (pacing); explicit Cow clicks pass False so every click yields a
-    fresh unseen joke, cycling through the whole pool before any repeat."""
+# ─── Serving pool items ───────────────────────────────────────────────────────
+
+def serve_item(user_id: int, bucket: str, language: str, when: Optional[str] = None) -> tuple[Optional[Item], bool]:
+    """The next item of a bucket for this user, or (None, True) when today's
+    cap is reached, or (None, False) when the language has nothing."""
+    lang = iso(language)
     with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        _ensure_user_state(state, user_id, language, today)
-        u = state[str(user_id)]
-
-        if enforce_daily_cap and u["jokes_served"] >= 3:
-            return None, {}
-        if not u["joke_queue"]:
-            _reset_category(u, "joke_queue", "seen_jokes", JOKES, language)
-        if not u["joke_queue"]:
-            return None, {}  # pool genuinely empty for this language
-
-        joke = u["joke_queue"].pop(0)
-        u["jokes_served"] += 1
-        seen: list = u.setdefault("seen_jokes", [])
-        if joke not in seen:
-            seen.append(joke)
-        _save_state(state)
-        return _cap(joke), _build_translations(joke, JOKES, language)
+        u = _today(_load_user(user_id), language)
+        served_key = _SERVED_KEY.get(bucket)
+        if served_key and u.get(served_key, 0) >= DAILY_CAPS[bucket]:
+            return None, True
+        with seen_store.session(user_id) as state:
+            _import_legacy_seen(u, state)
+            index = pick_item(state.bucket(bucket), BUCKET_ITEMS[bucket], lang, date_type.today(), when=when)
+        if index is None:
+            _save_user(user_id, u)
+            return None, False
+        if served_key:
+            u[served_key] = u.get(served_key, 0) + 1
+        _save_user(user_id, u)
+    return BUCKET_ITEMS[bucket][index], False
 
 
-def get_next_fact(
-    user_id: int, language: str, enforce_daily_cap: bool = True
-) -> tuple[str | None, dict[str, str]]:
-    """Return the next unseen fact. See get_next_joke for the cap semantics."""
-    with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        _ensure_user_state(state, user_id, language, today)
-        u = state[str(user_id)]
+def item_text(item: Item, language: str) -> str:
+    return _cap(item.text_in(iso(language)) or "")
 
-        if enforce_daily_cap and u["facts_served"] >= 5:
-            return None, {}
-        if not u["fact_queue"]:
-            _reset_category(u, "fact_queue", "seen_facts", FACTS, language)
-        if not u["fact_queue"]:
-            return None, {}  # pool genuinely empty for this language
 
-        fact = u["fact_queue"].pop(0)
-        u["facts_served"] += 1
-        seen: list = u.setdefault("seen_facts", [])
-        if fact not in seen:
-            seen.append(fact)
-        _save_state(state)
-        return _cap(fact), _build_translations(fact, FACTS, language)
+def item_translations(item: Item) -> dict[str, str]:
+    return {lang: _cap(text) for lang, text in item.translations().items()}
 
 
 def get_next_encouragement(user_id: int, language: str) -> str:
-    """Return the next unseen encouragement for the user, cycling through all before repeating."""
-    with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        _ensure_user_state(state, user_id, language, today)
-        u = state[str(user_id)]
+    item, _ = serve_item(user_id, "encouragements", language)
+    return item_text(item, language) if item else ""
 
-        queue: list = u.get("encouragement_queue", [])
-        if not queue:
-            # Exhausted — rebuild and reshuffle
-            all_enc = list(ENCOURAGEMENTS.get(language.upper(), ENCOURAGEMENTS["EN"]))
-            random.shuffle(all_enc)
-            u["encouragement_queue"] = all_enc
-            u["seen_encouragements"] = []
-            queue = u["encouragement_queue"]
 
-        enc = queue.pop(0)
-        seen_enc: list = u.setdefault("seen_encouragements", [])
-        if enc not in seen_enc:
-            seen_enc.append(enc)
-        _save_state(state)
-        return _cap(enc)
+# ─── Daily flags ──────────────────────────────────────────────────────────────
+
+def _advice_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
 
 
 def get_pending_advice(user_id: int) -> str | None:
     with _lock:
-        state = _load_state()
-        key = str(user_id)
-        u = state.get(key, {})
-
+        u = _load_user(user_id)
         if not u.get("pending_advice") or u.get("advice_consumed", True):
             return None
-
         advice = u["pending_advice"]
         u["advice_consumed"] = True
-
-        # Persistent de-dup: never serve the same advice text twice (across days).
-        # Nudges vary with the user's situation, so this won't starve — a duplicate
-        # simply yields None and the frontend falls back to its local pacing pool.
-        seen_adv: list = u.setdefault("seen_advice", [])
-        if advice in seen_adv:
-            state[key] = u
-            _save_state(state)
+        # Never serve the same advice twice: remember short hashes, not texts.
+        seen = [h for h in u.get("seen_advice", []) if isinstance(h, str) and len(h) <= 16]
+        h = _advice_hash(advice)
+        if h in seen:
+            u["seen_advice"] = seen
+            _save_user(user_id, u)
             return None
-        seen_adv.append(advice)
-        if len(seen_adv) > 100:
-            del seen_adv[:-100]  # bound growth — keep the most recent 100
-
-        state[key] = u
-        _save_state(state)
+        u["seen_advice"] = (seen + [h])[-_ADVICE_MEMORY:]
+        _save_user(user_id, u)
         return advice
 
 
 def store_pending_advice(user_id: int, advice: str) -> None:
     with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        key = str(user_id)
-        existing = state.get(key, {})
-
-        if existing.get("date") == today:
-            existing["pending_advice"] = advice
-            existing["advice_consumed"] = False
-            state[key] = existing
-        else:
-            state[key] = {
-                "date": today,
-                "language": existing.get("language", "EN"),
-                "joke_queue": [],
-                "fact_queue": [],
-                "jokes_served": 0,
-                "facts_served": 0,
-                "seen_jokes": existing.get("seen_jokes", []),
-                "seen_facts": existing.get("seen_facts", []),
-                "seen_advice": existing.get("seen_advice", []),
-                "pending_advice": advice,
-                "advice_consumed": False,
-                "greeting_served": False,
-            }
-
-        _save_state(state)
+        u = _today(_load_user(user_id))
+        u["pending_advice"] = advice
+        u["advice_consumed"] = False
+        _save_user(user_id, u)
 
 
 def get_greeting_served(user_id: int) -> bool:
     with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        u = state.get(str(user_id), {})
-        return u.get("date") == today and u.get("greeting_served", False)
+        u = _load_user(user_id)
+        return u.get("date") == date_type.today().isoformat() and u.get("greeting_served", False)
 
 
 def mark_greeting_served(user_id: int) -> None:
     with _lock:
-        state = _load_state()
-        key = str(user_id)
-        u = state.get(key, {})
+        u = _today(_load_user(user_id))
         u["greeting_served"] = True
-        state[key] = u
-        _save_state(state)
+        _save_user(user_id, u)
 
 
-def get_next_budget_tip(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
+def tip_available_today(user_id: int) -> bool:
     with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        _ensure_user_state(state, user_id, language, today)
-        u = state[str(user_id)]
-
-        if u.get("budget_tips_served", 0) >= 3 or not u.get("budget_tip_queue"):
-            return None, {}
-
-        tip = u["budget_tip_queue"].pop(0)
-        u["budget_tips_served"] = u.get("budget_tips_served", 0) + 1
-        seen: list = u.setdefault("seen_budget_tips", [])
-        if tip not in seen:
-            seen.append(tip)
-        _save_state(state)
-        return _cap(tip), _build_translations(tip, BUDGET_TIPS, language)
+        u = _today(_load_user(user_id))
+        return u.get("tips_served", 0) < DAILY_CAPS["tips"]
 
 
-def get_next_statistic(user_id: int, language: str) -> tuple[str | None, dict[str, str]]:
-    with _lock:
-        state = _load_state()
-        today = date_type.today().isoformat()
-        _ensure_user_state(state, user_id, language, today)
-        u = state[str(user_id)]
-
-        if u.get("stats_served", 0) >= 5 or not u.get("stat_queue"):
-            return None, {}
-
-        stat = u["stat_queue"].pop(0)
-        u["stats_served"] = u.get("stats_served", 0) + 1
-        seen: list = u.setdefault("seen_stats", [])
-        if stat not in seen:
-            seen.append(stat)
-        _save_state(state)
-        return _cap(stat), _build_translations(stat, STATISTICS, language)
+__all__ = [
+    "DAILY_CAPS", "get_greeting_served", "get_next_encouragement", "get_pending_advice", "item_text",
+    "item_translations", "iso", "mark_greeting_served", "serve_item", "store_pending_advice",
+    "tip_available_today",
+]

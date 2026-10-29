@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Query
 
 from app.api.v1.endpoints.analyze import verify_api_key
-from app.data.content import ENCOURAGEMENTS
+from app.data.pool import ENCOURAGEMENTS
 from app.models.response import NextActionResponse
 from app.services.tamagotchi_action import get_categorized_content, get_next_action
 
@@ -13,7 +13,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _VALID_LANGUAGES = {"EN", "RU", "UA", "DE"}
-_VALID_CATEGORIES = {"joke", "fact", "advice"}
+_VALID_CATEGORIES = {"joke", "fact", "exit", "advice"}
 
 
 def _resolve_lang(language: str) -> str:
@@ -46,8 +46,9 @@ def next_tamagotchi_action(
         return get_next_action(user_id=user_id, language=lang, context=context)
     except Exception:
         logger.exception("[tamagotchi] get_next_action failed — serving local fallback")
-        enc = ENCOURAGEMENTS.get(lang, ENCOURAGEMENTS["EN"])
-        return NextActionResponse(type="ENCOURAGEMENT", content=random.choice(enc), animation_hint="COIN_COLLECT")
+        iso = {"UA": "uk"}.get(lang, lang.lower())
+        texts = [t for t in (e.text_in(iso) for e in ENCOURAGEMENTS) if t]
+        return NextActionResponse(type="ENCOURAGEMENT", content=random.choice(texts), animation_hint="COIN_COLLECT")
 
 
 @router.get(
@@ -57,7 +58,7 @@ def next_tamagotchi_action(
 )
 def categorized_content(
     user_id: int = Query(..., description="User ID"),
-    category: str = Query(..., description="Content category: joke, fact, advice"),
+    category: str = Query(..., description="Content category: joke, fact, exit, advice"),
     language: str = Query(default="EN", description="Language code: EN, RU, UA, DE"),
     context: str | None = Query(default=None, description="Budget health hint: good|warn|over"),
 ) -> NextActionResponse:
