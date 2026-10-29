@@ -15,6 +15,7 @@ from app.services import (
     tier_calculator,
 )
 from app.services.content_tracker import store_pending_advice
+from app.services.user_day import resolve_today
 from app.services.visit_tracker import record_visit
 
 router = APIRouter()
@@ -67,7 +68,7 @@ def analyze_behavior(body: AnalyzeBehaviorRequest) -> AnalyzeBehaviorResponse:
         budget_window=body.budget_window,
     )
 
-    store_pending_advice(user_id=profile.user_id, advice=nudge)
+    store_pending_advice(user_id=profile.user_id, advice=nudge, today=resolve_today(body.local_date))
     record_visit(user_id=profile.user_id)
 
     # Surface the per-user locally-learned profile (O(1) read, isolated by

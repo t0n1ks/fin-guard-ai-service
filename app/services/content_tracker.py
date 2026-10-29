@@ -13,6 +13,11 @@ Two kinds of per-user state, both touched one user at a time:
 
 Daily caps (jokes 2, facts 2, tips 1) make the pool sizes last: at the cap a
 user meets no repeated joke or fact for ~90 days (see pool_picker.py).
+
+"Today" is the user's LOCAL calendar day, sent by Go (see user_day.py), so the
+caps reset at the user's own midnight. The day only ever moves forward: if
+the user's date goes back (moved west, or an older UTC-dated row) the stored
+day is kept, so no day's caps are granted twice.
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ from app.data.pool import BUCKET_ITEMS
 from app.data.pool.model import Item
 from app.services import seen_store
 from app.services.pool_picker import pick_item
+from app.services.user_day import utc_today
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +146,19 @@ def _save_user(user_id: int, data: dict) -> None:
         _file_save(user_id, slim)
 
 
-def _today(u: dict, language: str | None = None) -> dict:
-    """Roll the daily counters over on a new day."""
-    today = date_type.today().isoformat()
-    if u.get("date") != today:
-        u.update({"date": today, "jokes_served": 0, "facts_served": 0, "tips_served": 0,
+def _stored_day(u: dict) -> Optional[date_type]:
+    try:
+        return date_type.fromisoformat(u.get("date") or "")
+    except (TypeError, ValueError):
+        return None
+
+
+def _today(u: dict, today: Optional[date_type] = None, language: str | None = None) -> dict:
+    """Roll the daily counters over when the user's local day moves forward."""
+    today = today or utc_today()
+    stored = _stored_day(u)
+    if stored is None or today > stored:
+        u.update({"date": today.isoformat(), "jokes_served": 0, "facts_served": 0, "tips_served": 0,
                   "greeting_served": False, "pending_advice": "", "advice_consumed": True})
     if language:
         u["language"] = language
@@ -165,12 +179,14 @@ def _import_legacy_seen(u: dict, state: seen_store.SeenState) -> None:
 
 # ─── Serving pool items ───────────────────────────────────────────────────────
 
-def serve_item(user_id: int, bucket: str, language: str, when: Optional[str] = None) -> tuple[Optional[Item], bool]:
+def serve_item(user_id: int, bucket: str, language: str, when: Optional[str] = None,
+               today: Optional[date_type] = None) -> tuple[Optional[Item], bool]:
     """The next item of a bucket for this user, or (None, True) when today's
-    cap is reached, or (None, False) when the language has nothing."""
+    cap is reached, or (None, False) when the language has nothing. ``today``
+    is the user's local date (UTC when unknown)."""
     lang = iso(language)
     with _lock:
-        u = _today(_load_user(user_id), language)
+        u = _today(_load_user(user_id), today, language)
         served_key = _SERVED_KEY.get(bucket)
         if served_key and u.get(served_key, 0) >= DAILY_CAPS[bucket]:
             return None, True
@@ -194,8 +210,8 @@ def item_translations(item: Item) -> dict[str, str]:
     return {lang: _cap(text) for lang, text in item.translations().items()}
 
 
-def get_next_encouragement(user_id: int, language: str) -> str:
-    item, _ = serve_item(user_id, "encouragements", language)
+def get_next_encouragement(user_id: int, language: str, today: Optional[date_type] = None) -> str:
+    item, _ = serve_item(user_id, "encouragements", language, today=today)
     return item_text(item, language) if item else ""
 
 
@@ -224,30 +240,29 @@ def get_pending_advice(user_id: int) -> str | None:
         return advice
 
 
-def store_pending_advice(user_id: int, advice: str) -> None:
+def store_pending_advice(user_id: int, advice: str, today: Optional[date_type] = None) -> None:
     with _lock:
-        u = _today(_load_user(user_id))
+        u = _today(_load_user(user_id), today)
         u["pending_advice"] = advice
         u["advice_consumed"] = False
         _save_user(user_id, u)
 
 
-def get_greeting_served(user_id: int) -> bool:
+def get_greeting_served(user_id: int, today: Optional[date_type] = None) -> bool:
     with _lock:
-        u = _load_user(user_id)
-        return u.get("date") == date_type.today().isoformat() and u.get("greeting_served", False)
+        return _today(_load_user(user_id), today).get("greeting_served", False)
 
 
-def mark_greeting_served(user_id: int) -> None:
+def mark_greeting_served(user_id: int, today: Optional[date_type] = None) -> None:
     with _lock:
-        u = _today(_load_user(user_id))
+        u = _today(_load_user(user_id), today)
         u["greeting_served"] = True
         _save_user(user_id, u)
 
 
-def tip_available_today(user_id: int) -> bool:
+def tip_available_today(user_id: int, today: Optional[date_type] = None) -> bool:
     with _lock:
-        u = _today(_load_user(user_id))
+        u = _today(_load_user(user_id), today)
         return u.get("tips_served", 0) < DAILY_CAPS["tips"]
 
 

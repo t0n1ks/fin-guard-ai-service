@@ -80,6 +80,8 @@ All UFO wording lives in plain data files — never in database rows. Each bucke
 | Encouragements | ambient fallback line | — |
 | Message variants | the Go companion's contextual messages (incl. the weekly star/cow nudges) | Go's pacing |
 
+**The daily caps reset at the user's local midnight.** Go resolves the user's timezone (the `X-User-Timezone` header, remembered on the profile, UTC fallback) and sends the user's local calendar date as `local_date` on `next-action`, `content` and `analyze-behavior`; this service never guesses a zone and uses the UTC date only when `local_date` is missing. The day only moves forward: after a timezone change to the west (local date earlier than the stored one) the stored day is kept, so a day's caps are never granted twice.
+
 **No repeats:** a user is served items they haven't seen yet. When a bucket is exhausted, repeats may begin (never the last few shown), and the seen-set is reset only when the pass is at least **60 days** old — never while unseen items remain. Items added later are served first. Seen-state is shared across languages. The pool holds 180 universal jokes (+5 language-locked per language), 180 facts, 90 tips, 30 exit lines, 8 quota lines and 116 message variants (20 of them quest nudges) — with the caps, no repeated joke, fact or tip for ~90 days. Facts are accurate and evergreen; any calculation states its assumption and specific claims name their source.
 
 **Safety:** tests scan every line in all four languages for shaming words and slurs.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime
+from datetime import date, datetime
 
 from app.data.content import (
     CHEERFUL_GREETINGS,
@@ -74,6 +74,7 @@ def get_categorized_content(
     language: str,
     category: str,
     context: str | None = None,
+    today: date | None = None,
 ) -> NextActionResponse:
     """A single item of an explicit, fixed category.
 
@@ -83,7 +84,7 @@ def get_categorized_content(
     follow the daily cap (2 each): past it, the cow / star answer with a
     short QUOTA line instead, so the 90-day no-repeat promise holds. NONE
     lets the caller fall back to its own built-in lines. ``context`` is
-    accepted for parity/logging only.
+    accepted for parity/logging only; ``today`` is the user's local date.
     """
     cat = (category or "").strip().lower()
 
@@ -96,17 +97,18 @@ def get_categorized_content(
     if cat not in _CATEGORY_BUCKETS:
         return _none()
     bucket, type_, hint = _CATEGORY_BUCKETS[cat]
-    item, capped = serve_item(user_id, bucket, language)
+    item, capped = serve_item(user_id, bucket, language, today=today)
     if item is not None:
         return _build_response(type_, item_text(item, language), hint, language, item_translations(item))
     if capped:
-        line, _ = serve_item(user_id, "quota", language, when=cat)
+        line, _ = serve_item(user_id, "quota", language, when=cat, today=today)
         if line is not None:
             return _build_response("QUOTA", item_text(line, language), hint, language, item_translations(line))
     return _none(hint)
 
 
-def get_next_action(user_id: int, language: str, context: str | None = None) -> NextActionResponse:
+def get_next_action(user_id: int, language: str, context: str | None = None,
+                    today: date | None = None) -> NextActionResponse:
     """The ambient channel: pending advice, the daily greeting, at most one tip
     a day, else an encouragement or a quiet animation. Jokes and facts are
     never served here — they belong to the cow and the star (and their caps)."""
@@ -115,7 +117,7 @@ def get_next_action(user_id: int, language: str, context: str | None = None) -> 
         return _build_response("ADVICE", advice, "COIN_COLLECT", language, user_id=user_id)
 
     # Time-aware / mood-aware greeting — shown once per day on first interaction
-    if not get_greeting_served(user_id):
+    if not get_greeting_served(user_id, today):
         lang_up = language.upper()
         mood = get_visit_mood(user_id)
 
@@ -128,17 +130,17 @@ def get_next_action(user_id: int, language: str, context: str | None = None) -> 
             pool = GREETINGS.get(lang_up, GREETINGS["EN"])[segment]
 
         greeting = random.choice(pool)
-        mark_greeting_served(user_id)
+        mark_greeting_served(user_id, today)
         return _build_response("GREETING", greeting, "FLY_BY_MOON", language, user_id=user_id)
 
-    if tip_available_today(user_id):
-        tip, _ = serve_item(user_id, "tips", language)
+    if tip_available_today(user_id, today):
+        tip, _ = serve_item(user_id, "tips", language, today=today)
         if tip is not None:
             return _build_response("TIP", item_text(tip, language), "COIN_COLLECT", language, item_translations(tip))
 
     # Encouragement 60% of the time, else just an animation.
     if random.random() < 0.6:
-        enc = get_next_encouragement(user_id, language)
+        enc = get_next_encouragement(user_id, language, today)
         if enc:
             return _build_response("ENCOURAGEMENT", enc, "COIN_COLLECT", language)
 

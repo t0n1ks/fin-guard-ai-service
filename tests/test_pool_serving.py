@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 from app.data.pool import BUCKET_ITEMS
 from app.data.pool.model import L, U
 from app.main import app
-from app.services import content_tracker, seen_store
+from app.services import content_tracker, seen_store, user_day
 from app.services.pool_picker import RESET_AFTER_DAYS, pick_item, pick_variant
 from app.services.seen_store import Bucket, SeenState
 
@@ -121,19 +121,99 @@ def test_daily_caps_then_quota_lines(monkeypatch):
     assert all(e["type"] == "EXIT" and e["content"] for e in exits), "exit lines have no cap"
 
 
-def test_next_day_resets_the_caps(monkeypatch):
+def _use_jokes(user_id: int, today: date) -> None:
     for _ in range(2):
-        content_tracker.serve_item(8, "jokes", "EN")
-    assert content_tracker.serve_item(8, "jokes", "EN") == (None, True)
+        assert content_tracker.serve_item(user_id, "jokes", "EN", today=today)[0] is not None
+    assert content_tracker.serve_item(user_id, "jokes", "EN", today=today) == (None, True)
 
-    class Tomorrow(date):
-        @classmethod
-        def today(cls):
-            return date.today() + timedelta(days=1)
 
-    monkeypatch.setattr(content_tracker, "date_type", Tomorrow)
-    item, capped = content_tracker.serve_item(8, "jokes", "EN")
-    assert item is not None and not capped
+def _joke_available(user_id: int, today: date) -> bool:
+    return content_tracker.serve_item(user_id, "jokes", "EN", today=today)[0] is not None
+
+
+def test_next_day_resets_the_caps():
+    _use_jokes(8, DAY)
+    assert _joke_available(8, DAY + timedelta(days=1))
+
+
+# ── the user's local day (Go sends it; Phase 2.16 zone) ──────────────────────
+
+BERLIN_WINTER, NEW_YORK_WINTER = timedelta(hours=1), timedelta(hours=-5)
+
+
+def _berlin_2026(utc: datetime) -> timedelta:
+    """Berlin's offset; summer time ends 2026-10-25 01:00 UTC."""
+    return timedelta(hours=2 if utc < datetime(2026, 10, 25, 1, tzinfo=timezone.utc) else 1)
+
+
+def _local_date_of(utc: datetime, offset: timedelta) -> date:
+    """What Go sends: the user's local calendar date at that instant."""
+    return utc.astimezone(timezone(offset)).date()
+
+
+def test_caps_reset_at_local_midnight_not_utc_midnight():
+    # Berlin in winter is UTC+1: local 23:30 and 00:05 straddle local midnight
+    # while it is 22:30 → 23:05 UTC — still the same UTC day.
+    zone = BERLIN_WINTER
+    late = datetime(2026, 11, 1, 22, 30, tzinfo=timezone.utc)
+    after_midnight = datetime(2026, 11, 1, 23, 5, tzinfo=timezone.utc)
+    assert late.date() == after_midnight.date()
+    _use_jokes(20, _local_date_of(late, zone))
+    assert _joke_available(20, _local_date_of(after_midnight, zone))
+
+
+def test_utc_midnight_does_not_reset_a_user_west_of_utc():
+    # New York (UTC−5): 20:00 → 21:30 local crosses UTC midnight, not local.
+    zone = NEW_YORK_WINTER
+    _use_jokes(21, _local_date_of(datetime(2026, 11, 2, 1, 0, tzinfo=timezone.utc), zone))
+    assert not _joke_available(21, _local_date_of(datetime(2026, 11, 2, 2, 30, tzinfo=timezone.utc), zone))
+
+
+def test_moving_west_never_grants_a_day_twice():
+    # Used today in Berlin, then the zone changes to New York where it is
+    # still "yesterday": the stored day is kept — no second reset — and the
+    # next reset comes at the new zone's midnight.
+    _use_jokes(22, date(2026, 11, 2))
+    assert not _joke_available(22, date(2026, 11, 1))
+    assert not _joke_available(22, date(2026, 11, 2))
+    assert _joke_available(22, date(2026, 11, 3))
+
+
+def test_moving_east_resets_once_on_the_new_local_day():
+    _use_jokes(23, date(2026, 11, 1))
+    _use_jokes(23, date(2026, 11, 2))  # Tokyo is already on the 2nd: one reset
+    assert not _joke_available(23, date(2026, 11, 2))
+
+
+def test_dst_days_reset_exactly_once():
+    # Berlin leaves summer time on 2026-10-25 (a 25-hour local day).
+    instants = [datetime(2026, 10, 24, 21, 0, tzinfo=timezone.utc) + timedelta(minutes=30 * i) for i in range(60)]
+    days = [_local_date_of(t, _berlin_2026(t)) for t in instants]
+    resets = 0
+    for d in days:
+        before = content_tracker._load_user(24).get("date")
+        content_tracker.serve_item(24, "facts", "EN", today=d)
+        resets += content_tracker._load_user(24).get("date") != before
+    assert resets == len(set(days)) == 3
+
+
+def test_resolve_today_uses_go_date_else_utc():
+    utc = user_day.utc_today()
+    assert user_day.resolve_today(None) == utc
+    assert user_day.resolve_today("garbage") == utc
+    assert user_day.resolve_today((utc + timedelta(days=1)).isoformat()) == utc + timedelta(days=1)
+    assert user_day.resolve_today((utc - timedelta(days=1)).isoformat()) == utc - timedelta(days=1)
+    assert user_day.resolve_today((utc + timedelta(days=5)).isoformat()) == utc  # nobody's local date
+
+
+def test_endpoints_use_the_local_date_from_go():
+    utc = user_day.utc_today()
+    params = {"user_id": 25, "category": "joke", "language": "EN"}
+    types = [client.get("/v1/tamagotchi/content", params={**params, "local_date": utc.isoformat()}, headers=KEY).json()["type"] for _ in range(3)]
+    assert types == ["JOKE", "JOKE", "QUOTA"]
+    tomorrow = (utc + timedelta(days=1)).isoformat()
+    assert client.get("/v1/tamagotchi/content", params={**params, "local_date": tomorrow}, headers=KEY).json()["type"] == "JOKE"
+    assert content_tracker._load_user(25)["date"] == tomorrow
 
 
 def test_tip_at_most_once_a_day_in_the_ambient_channel():

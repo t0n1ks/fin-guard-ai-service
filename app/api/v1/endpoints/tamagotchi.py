@@ -8,6 +8,7 @@ from app.api.v1.endpoints.analyze import verify_api_key
 from app.data.pool import ENCOURAGEMENTS
 from app.models.response import NextActionResponse
 from app.services.tamagotchi_action import get_categorized_content, get_next_action
+from app.services.user_day import resolve_today
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -39,11 +40,12 @@ def next_tamagotchi_action(
     user_id: int = Query(..., description="User ID"),
     language: str = Query(default="EN", description="Language code: EN, RU, UA, DE"),
     context: str | None = Query(default=None, description="Budget health hint: good|warn|over"),
+    local_date: str | None = Query(default=None, description="User's local date (YYYY-MM-DD) from Go"),
 ) -> NextActionResponse:
     lang = _resolve_lang(language)
     logger.info("[tamagotchi] next-action uid=%d raw_lang=%r resolved_lang=%s ctx=%r", user_id, language, lang, context)
     try:
-        return get_next_action(user_id=user_id, language=lang, context=context)
+        return get_next_action(user_id=user_id, language=lang, context=context, today=resolve_today(local_date))
     except Exception:
         logger.exception("[tamagotchi] get_next_action failed — serving local fallback")
         iso = {"UA": "uk"}.get(lang, lang.lower())
@@ -61,6 +63,7 @@ def categorized_content(
     category: str = Query(..., description="Content category: joke, fact, exit, advice"),
     language: str = Query(default="EN", description="Language code: EN, RU, UA, DE"),
     context: str | None = Query(default=None, description="Budget health hint: good|warn|over"),
+    local_date: str | None = Query(default=None, description="User's local date (YYYY-MM-DD) from Go"),
 ) -> NextActionResponse:
     """Category-locked content for user-initiated UFO entities (Cow=joke, Star=fact)
     and the transaction-advice path. Returns type="NONE" when the pool is
@@ -71,7 +74,8 @@ def categorized_content(
         return NextActionResponse(type="NONE", content=None, animation_hint="FLY_BY_MOON")
     logger.info("[tamagotchi] content uid=%d cat=%s lang=%s ctx=%r", user_id, cat, lang, context)
     try:
-        return get_categorized_content(user_id=user_id, language=lang, category=cat, context=context)
+        return get_categorized_content(user_id=user_id, language=lang, category=cat, context=context,
+                                       today=resolve_today(local_date))
     except Exception:
         logger.exception("[tamagotchi] get_categorized_content failed — serving NONE")
         return NextActionResponse(type="NONE", content=None, animation_hint="FLY_BY_MOON")

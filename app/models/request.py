@@ -120,3 +120,7 @@ class AnalyzeBehaviorRequest(BaseModel):
     # at the real average pace) — the number the forecast card shows. When
     # present it is used as-is, so nudges can never contradict the card.
     period_end_forecast: Optional[float] = None
+    # The user's local calendar date (YYYY-MM-DD, the Phase 2.16 zone) — the
+    # companion's daily counters live on it. A string so a bad value never
+    # fails the analysis; it falls back to UTC.
+    local_date: Optional[str] = None
