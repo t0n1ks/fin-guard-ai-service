@@ -518,3 +518,31 @@ def test_tier_alignment_pacing_warn():
         txs, profile, TODAY, budget_window=_window(spent_this_week=spend)
     )
     assert tier == "pacing_warn"
+
+
+# ─── Unit: savings forecast (leftover budget carries over, not into savings) ──
+
+
+def test_savings_forecast_is_the_pool_not_pool_plus_surplus():
+    """An unspent budget carries into the next cycle's spendable budget (Go,
+    since 2.17), so the end-of-cycle pool is the current pool — a large
+    projected surplus must not be added to savings."""
+    cycle = _cycle(saved_money_balance=50.0, saved_money_category_id=7)
+    txs = [_var_tx(10.0, date(2026, 5, 2))]  # far under budget → big surplus
+    assert forecaster.predict_end_of_month_balance(txs, date(2026, 5, 5), 2000.0, cycle) > 0
+    result = forecaster.predict_savings_accumulation(txs, date(2026, 5, 5), _profile(), cycle)
+    assert result == 50.0
+
+
+def test_savings_forecast_falls_back_to_pool_transactions():
+    """Without the backend figure the pool is summed from its own entries:
+    deposits add, withdrawals (spending from savings) subtract."""
+    cycle = _cycle(saved_money_balance=0.0, saved_money_category_id=7)
+    pool = CategoryInfo(id=7, name="Saved Money")
+    txs = [
+        TransactionItem(id=1, amount=100.0, category=pool, date=date(2026, 5, 1),
+                        type="savings_deposit", income_type="one_time"),
+        TransactionItem(id=2, amount=30.0, category=pool, date=date(2026, 5, 3),
+                        type="savings_withdrawal", income_type="one_time"),
+    ]
+    assert forecaster.predict_savings_accumulation(txs, date(2026, 5, 5), _profile(), cycle) == 70.0

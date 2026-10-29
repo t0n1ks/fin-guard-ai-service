@@ -113,11 +113,14 @@ def predict_savings_accumulation(
     salary_cycle: Optional[SalaryCycleInfo] = None,
 ) -> float:
     """
-    Estimate the projected savings pool balance at end of the current cycle.
+    Estimate the savings pool balance at the end of the current cycle.
 
-    Uses the authoritative pool balance supplied by the backend (saved_money_balance)
-    as the base, then adds the projected end-of-cycle variable-budget surplus.
-    This keeps savings fully decoupled from the general income/expense flow.
+    That is the authoritative pool balance supplied by the backend
+    (saved_money_balance) as it stands: nothing flows into the pool on its own
+    before the next cycle starts. An unspent variable budget is NOT moved into
+    savings at cycle end — the Go backend carries it over into the next cycle's
+    spendable budget — so adding the projected surplus would overstate savings.
+    Savings only grow by the user's own deposits and the next cycle's allocation.
 
     Falls back to deriving the current balance from savings_deposit /
     savings_withdrawal transactions when the backend field is unavailable
@@ -141,13 +144,7 @@ def predict_savings_accumulation(
         # No pool information at all — return 0 rather than a misleading number.
         return 0.0
 
-    # ── Projected end-of-cycle surplus going to the pool ─────────────────────
-    # The variable-budget surplus (remaining allowance after projected spending)
-    # is transferred to the savings pool at cycle end. Add it to current balance.
-    projected_surplus = max(0.0, predict_end_of_month_balance(
-        transactions, analysis_date, profile.expected_salary, salary_cycle
-    ))
-    return round(current_balance + projected_surplus, 2)
+    return round(current_balance, 2)
 
 
 # ── Internal algorithms ───────────────────────────────────────────────────────
