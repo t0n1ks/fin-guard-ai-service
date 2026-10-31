@@ -109,10 +109,13 @@ def get_categorized_content(
 
 
 def get_next_action(user_id: int, language: str, context: str | None = None,
-                    today: date | None = None, hour: int | None = None) -> NextActionResponse:
+                    today: date | None = None, hour: int | None = None,
+                    skip_tip: bool = False) -> NextActionResponse:
     """The ambient channel: pending advice, the daily greeting, at most one tip
     a day, else an encouragement or a quiet animation. Jokes and facts are
-    never served here — they belong to the cow and the star (and their caps)."""
+    never served here — they belong to the cow and the star (and their caps).
+    ``skip_tip`` (Lite mode, where tips are hidden) leaves the day's tip
+    unserved and uncounted."""
     advice = get_pending_advice(user_id)
     if advice is not None:
         return _build_response("ADVICE", advice, "COIN_COLLECT", language, user_id=user_id)
@@ -134,7 +137,7 @@ def get_next_action(user_id: int, language: str, context: str | None = None,
         mark_greeting_served(user_id, today)
         return _build_response("GREETING", greeting, "FLY_BY_MOON", language, user_id=user_id)
 
-    if tip_available_today(user_id, today):
+    if not skip_tip and tip_available_today(user_id, today):
         tip, _ = serve_item(user_id, "tips", language, today=today)
         if tip is not None:
             return _build_response("TIP", item_text(tip, language), "COIN_COLLECT", language, item_translations(tip))

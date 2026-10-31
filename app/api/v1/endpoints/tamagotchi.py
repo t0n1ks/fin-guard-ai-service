@@ -42,12 +42,14 @@ def next_tamagotchi_action(
     context: str | None = Query(default=None, description="Budget health hint: good|warn|over"),
     local_date: str | None = Query(default=None, description="User's local date (YYYY-MM-DD) from Go"),
     local_hour: str | None = Query(default=None, description="User's local hour (0-23) from Go, picks the greeting"),
+    skip_tip: bool = Query(default=False, description="Lite mode hides tips: don't serve (or count) the day's tip"),
 ) -> NextActionResponse:
     lang = _resolve_lang(language)
     logger.info("[tamagotchi] next-action uid=%d raw_lang=%r resolved_lang=%s ctx=%r", user_id, language, lang, context)
     try:
         return get_next_action(user_id=user_id, language=lang, context=context,
-                               today=resolve_today(local_date), hour=resolve_hour(local_hour))
+                               today=resolve_today(local_date), hour=resolve_hour(local_hour),
+                               skip_tip=skip_tip)
     except Exception:
         logger.exception("[tamagotchi] get_next_action failed — serving local fallback")
         iso = {"UA": "uk"}.get(lang, lang.lower())

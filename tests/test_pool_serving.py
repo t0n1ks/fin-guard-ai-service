@@ -224,6 +224,17 @@ def test_tip_at_most_once_a_day_in_the_ambient_channel():
     assert "JOKE" not in types and "FACT" not in types
 
 
+def test_skip_tip_leaves_the_days_tip_unspent():
+    params = {"user_id": 36, "language": "EN", "skip_tip": "true"}
+    types = [client.get("/v1/tamagotchi/next-action", params=params, headers=KEY).json()["type"] for _ in range(6)]
+    assert types[0] == "GREETING"
+    assert "TIP" not in types
+    assert content_tracker.tip_available_today(36)
+    # Without the flag (extended mode) the tip is still there, once.
+    types = [client.get("/v1/tamagotchi/next-action", params={"user_id": 36, "language": "EN"}, headers=KEY).json()["type"] for _ in range(4)]
+    assert types.count("TIP") == 1
+
+
 def test_daily_row_holds_no_item_text():
     for cat in ("joke", "fact", "exit"):
         client.get("/v1/tamagotchi/content", params={"user_id": 10, "category": cat, "language": "EN"}, headers=KEY)
